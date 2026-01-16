@@ -1,0 +1,20 @@
+[package]
+name = "shielded_pool_pinocchio"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pinocchio = "0.10.1"
+pinocchio-log = "0.5.1"
+pinocchio-pubkey = "0.3.0"
+pinocchio-system = "0.5.0"
+bytemuck = { version = "1.23.0", features = ["derive"] }
+solana-program-log = "1.1.0"
+solana-program-error = "3.0.0"
+solana-instruction-view = "1.0.0"
+
+[features]
+no-entrypoint = []

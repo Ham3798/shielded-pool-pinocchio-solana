@@ -1,0 +1,42 @@
+# OS
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Keypairs
+keypair/
+**/keypair/
+**/*-keypair.json
+**/deployer.json
+
+# Build artifacts
+/target/
+**/target/
+**/dist/
+**/build/
+
+# Node
+node_modules/
+**/node_modules/
+.npmrc
+.pnpm-store/
+**/.pnpm-store/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Noir / Sunspot
+Prover.toml
+*.proof
+*.pw
+*.vk
+*.pk
+*.ccs
+*.gz
+
+# Editor
+.vscode/
+.idea/
