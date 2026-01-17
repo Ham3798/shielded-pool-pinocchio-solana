@@ -10,7 +10,8 @@
 keypair/
 **/keypair/
 **/*-keypair.json
-**/deployer.json
+**/sender.json
+**/relayer.json
 
 # Build artifacts
 /target/

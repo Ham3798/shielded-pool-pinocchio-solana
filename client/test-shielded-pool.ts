@@ -9,6 +9,7 @@ import {
     setTransactionMessageFeePayerSigner,
     setTransactionMessageLifetimeUsingBlockhash,
     signTransactionMessageWithSigners,
+    addSignersToTransactionMessage,
     assertIsSendableTransaction,
     assertIsTransactionWithBlockhashLifetime,
     pipe,
@@ -55,7 +56,7 @@ const circuitConfig: CircuitConfig = {
 };
 
 const keypairDir = path.join(repoRoot, "keypair");
-const deployerWalletPath = path.join(keypairDir, "deployer.json");
+const senderWalletPath = path.join(keypairDir, "sender.json");
 
 const INSTRUCTION = {
     INITIALIZE: 0,
@@ -110,21 +111,25 @@ function logBusinessAccounts(label: string, accounts: Array<{ name: string; addr
     }
 }
 
+type InstructionAccount = { address: Address; role: number };
+type Instruction = {
+    programAddress: Address;
+    accounts: InstructionAccount[];
+    data: Uint8Array;
+};
+
 async function sendTransaction(
     sendAndConfirm: ReturnType<typeof sendAndConfirmTransactionFactory>,
     rpc: ReturnType<typeof createSolanaRpc>,
-    signer: KeyPairSigner,
-    instructions: Array<{
-        programAddress: Address;
-        accounts: Array<{ address: Address; role: number }>;
-        data: Uint8Array;
-    }>,
+    feePayer: KeyPairSigner,
+    signers: KeyPairSigner[],
+    instructions: Instruction[],
     units: number,
     label: string
 ) {
     const { value: blockhash } = await rpc.getLatestBlockhash().send();
     const baseMessage = createTransactionMessage({ version: 0 });
-    const messageWithPayer = setTransactionMessageFeePayerSigner(signer, baseMessage);
+    const messageWithPayer = setTransactionMessageFeePayerSigner(feePayer, baseMessage);
     const messageWithLifetime = setTransactionMessageLifetimeUsingBlockhash(
         blockhash,
         messageWithPayer
@@ -133,7 +138,8 @@ async function sendTransaction(
         [getSetComputeUnitLimitInstruction({ units }), ...instructions],
         messageWithLifetime
     );
-    const signedTx = await signTransactionMessageWithSigners(transactionMessage);
+    const messageWithSigners = addSignersToTransactionMessage(signers, transactionMessage);
+    const signedTx = await signTransactionMessageWithSigners(messageWithSigners);
     assertIsSendableTransaction(signedTx);
     assertIsTransactionWithBlockhashLifetime(signedTx);
     const sig = await sendAndConfirm(signedTx, { commitment: "confirmed" });
@@ -144,17 +150,14 @@ async function sendTransaction(
 async function expectFailure(
     sendAndConfirm: ReturnType<typeof sendAndConfirmTransactionFactory>,
     rpc: ReturnType<typeof createSolanaRpc>,
-    signer: KeyPairSigner,
-    instruction: {
-        programAddress: Address;
-        accounts: Array<{ address: Address; role: number }>;
-        data: Uint8Array;
-    },
+    feePayer: KeyPairSigner,
+    signers: KeyPairSigner[],
+    instruction: Instruction,
     label: string
 ) {
     console.log(`\n${label}`);
     try {
-        await sendTransaction(sendAndConfirm, rpc, signer, [instruction], 600_000, label);
+        await sendTransaction(sendAndConfirm, rpc, feePayer, signers, [instruction], 600_000, label);
         console.log("  ⚠️ Unexpected success");
     } catch (err: any) {
         console.log("  ✅ Expected failure");
@@ -179,8 +182,11 @@ async function main() {
         rpcSubscriptions,
     });
 
-    const deployer = await loadKeypair(deployerWalletPath);
-    console.log(`Deployer: ${deployer.address}`);
+    const sender = await loadKeypair(senderWalletPath);
+    const relayerWalletPath = path.join(keypairDir, "relayer.json");
+    const relayer = await loadKeypair(relayerWalletPath);
+    console.log(`Sender: ${sender.address}`);
+    console.log(`Relayer: ${relayer.address}`);
     console.log(`Verifier Program: ${ZK_VERIFIER_PROGRAM_ID}`);
     console.log(`Shielded Pool Program: ${SHIELDED_POOL_PROGRAM_ID}`);
 
@@ -249,7 +255,7 @@ async function main() {
     const initIx = {
         programAddress: SHIELDED_POOL_PROGRAM_ID,
         accounts: [
-            { address: deployer.address, role: 3 },
+            { address: relayer.address, role: 3 },
             { address: statePda, role: 1 },
             { address: vaultPda, role: 1 },
             { address: SYSTEM_PROGRAM_ADDRESS, role: 0 },
@@ -257,7 +263,7 @@ async function main() {
         data: new Uint8Array([INSTRUCTION.INITIALIZE]),
     };
     const initAccounts = [
-        { name: "deployer", address: deployer.address },
+        { name: "fee_payer", address: relayer.address },
         { name: "state_pda", address: statePda },
         { name: "vault_pda", address: vaultPda },
         { name: "system_program", address: SYSTEM_PROGRAM_ADDRESS },
@@ -272,7 +278,7 @@ async function main() {
     const depositIx = {
         programAddress: SHIELDED_POOL_PROGRAM_ID,
         accounts: [
-            { address: deployer.address, role: 3 },
+            { address: sender.address, role: 3 },
             { address: statePda, role: 1 },
             { address: vaultPda, role: 1 },
             { address: SYSTEM_PROGRAM_ADDRESS, role: 0 },
@@ -280,7 +286,7 @@ async function main() {
         data: depositData,
     };
     const depositAccounts = [
-        { name: "depositor", address: deployer.address },
+        { name: "sender", address: sender.address },
         { name: "state_pda", address: statePda },
         { name: "vault_pda", address: vaultPda },
         { name: "system_program", address: SYSTEM_PROGRAM_ADDRESS },
@@ -295,7 +301,7 @@ async function main() {
     const withdrawIx = {
         programAddress: SHIELDED_POOL_PROGRAM_ID,
         accounts: [
-            { address: deployer.address, role: 3 }, // payer
+            { address: relayer.address, role: 3 },  // fee payer (relayer)
             { address: recipientPubkey, role: 1 },  // recipient
             { address: vaultPda, role: 1 },         // vault
             { address: statePda, role: 1 },         // state
@@ -306,7 +312,7 @@ async function main() {
         data,
     };
     const withdrawAccounts = [
-        { name: "payer", address: deployer.address },
+        { name: "fee_payer", address: relayer.address },
         { name: "recipient", address: recipientPubkey },
         { name: "vault_pda", address: vaultPda },
         { name: "state_pda", address: statePda },
@@ -318,7 +324,7 @@ async function main() {
     logBusinessAccounts("\nInitialize Accounts:", initAccounts);
     console.log("Sending Initialize Transaction...");
     try {
-        await sendTransaction(sendAndConfirm, rpc, deployer, [initIx], 200_000, "Initialize");
+        await sendTransaction(sendAndConfirm, rpc, relayer, [], [initIx], 200_000, "Initialize");
     } catch (err: any) {
         console.log("\n❌ Initialize Failed (Expected if programs not yet deployed)");
         if (err.context?.logs) {
@@ -331,7 +337,7 @@ async function main() {
     logBusinessAccounts("\nDeposit Accounts:", depositAccounts);
     console.log("Sending Deposit Transaction...");
     try {
-        await sendTransaction(sendAndConfirm, rpc, deployer, [depositIx], 200_000, "Deposit");
+        await sendTransaction(sendAndConfirm, rpc, relayer, [sender], [depositIx], 200_000, "Deposit");
     } catch (err: any) {
         console.log("\n❌ Deposit Failed (Expected if programs not yet deployed)");
         if (err.context?.logs) {
@@ -360,14 +366,16 @@ async function main() {
     await expectFailure(
         sendAndConfirm,
         rpc,
-        deployer,
+        relayer,
+        [],
         corruptedWithdrawIx,
         "Expected Failure: Invalid Proof"
     );
     await expectFailure(
         sendAndConfirm,
         rpc,
-        deployer,
+        relayer,
+        [],
         wrongRecipientIx,
         "Expected Failure: Recipient Mismatch"
     );
@@ -375,7 +383,7 @@ async function main() {
     logBusinessAccounts("\nWithdraw Accounts:", withdrawAccounts);
     console.log("Sending Withdrawal Transaction...");
     try {
-        await sendTransaction(sendAndConfirm, rpc, deployer, [withdrawIx], 600_000, "Withdrawal");
+        await sendTransaction(sendAndConfirm, rpc, relayer, [], [withdrawIx], 600_000, "Withdrawal");
     } catch (err: any) {
         console.log("\n❌ Withdrawal Failed (Expected if programs not yet deployed)");
         if (err.context?.logs) {
@@ -388,7 +396,8 @@ async function main() {
     await expectFailure(
         sendAndConfirm,
         rpc,
-        deployer,
+        relayer,
+        [],
         withdrawIx,
         "Expected Failure: Double Spend (Nullifier Reuse)"
     );
