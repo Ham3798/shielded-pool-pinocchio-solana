@@ -1,5 +1,5 @@
 [package]
-name = "shielded_pool"
+name = "shielded_pool_verifier"
 type = "bin"
 authors = ["Tuan Pham Minh"]
 

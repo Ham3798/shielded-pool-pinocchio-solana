@@ -52,7 +52,7 @@ const SHIELDED_POOL_PROGRAM_ID = address(requireEnv("SHIELDED_POOL_PROGRAM_ID"))
 const repoRoot = path.join(process.cwd(), "..");
 const circuitConfig: CircuitConfig = {
     circuitDir: path.join(repoRoot, "noir_circuit"),
-    circuitName: "shielded_pool",
+    circuitName: "shielded_pool_verifier",
 };
 
 const keypairDir = path.join(repoRoot, "keypair");
