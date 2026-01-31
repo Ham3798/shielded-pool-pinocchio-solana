@@ -22,11 +22,38 @@ import {
 } from "../lib/merkle";
 import {
   SHIELDED_POOL_PROGRAM_ID,
+  ZK_VERIFIER_PROGRAM_ID,
   SYSTEM_PROGRAM_ADDRESS,
   INSTRUCTION,
   LAMPORTS_PER_SOL,
+  recipientFieldFromPubkey,
   type AuditLogEntry,
 } from "../lib/shielded-pool";
+
+// Helper function to convert hex string to Uint8Array
+function hexToBytes(hex: string): Uint8Array {
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+// Interface for deposit data needed for CLI proof generation
+interface DepositData {
+  root: string;
+  nullifier: string;
+  recipient: string;
+  amount: bigint;
+  waCommitment: string;
+  secretKey: string;
+  ownerX: string;
+  ownerY: string;
+  randomness: string;
+  index: number;
+  siblings: string[];
+}
 
 export function ShieldedPoolCard() {
   const { wallet, status } = useWalletConnection();
@@ -39,7 +66,16 @@ export function ShieldedPoolCard() {
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [isPoseidonReady, setIsPoseidonReady] = useState(false);
   const merkleTreeRef = useRef<ShieldedPoolMerkleTree | null>(null);
-  
+
+  // Deposit data for CLI proof generation
+  const [depositData, setDepositData] = useState<DepositData | null>(null);
+  const [showCliInstructions, setShowCliInstructions] = useState(false);
+
+  // Withdraw form state
+  const [proofHex, setProofHex] = useState("");
+  const [witnessHex, setWitnessHex] = useState("");
+  const [recipientAddress, setRecipientAddress] = useState("");
+
   // Get or create merkle tree (only after Poseidon is ready)
   const getMerkleTree = useCallback(() => {
     if (!merkleTreeRef.current && isPoseidonReady) {
@@ -48,18 +84,19 @@ export function ShieldedPoolCard() {
     return merkleTreeRef.current;
   }, [isPoseidonReady]);
 
-  // Current deposit state
-  const [currentIdentity, setCurrentIdentity] = useState<IdentityKeypair | null>(null);
-  const [currentRandomness, setCurrentRandomness] = useState<bigint | null>(null);
-  const [currentCommitment, setCurrentCommitment] = useState<bigint | null>(null);
-  const [currentIndex, setCurrentIndex] = useState<number | null>(null);
-
   const walletAddress = wallet?.account.address;
 
   // Initialize Poseidon
   useEffect(() => {
     initPoseidon().then(() => setIsPoseidonReady(true));
   }, []);
+
+  // Auto-fill recipient address
+  useEffect(() => {
+    if (walletAddress && !recipientAddress) {
+      setRecipientAddress(walletAddress);
+    }
+  }, [walletAddress, recipientAddress]);
 
   // Derive PDAs when wallet connects
   useEffect(() => {
@@ -92,34 +129,31 @@ export function ShieldedPoolCard() {
     try {
       setTxStatus("Generating BabyJubJub identity...");
 
-      // Generate identity
+      // Generate identity (128-bit secret key for Noir compatibility)
       const secretKey = randomField128();
       const identity: IdentityKeypair = {
         secretKey,
-        publicKey: { x: secretKey, y: secretKey }, // Simplified for demo
+        publicKey: { x: secretKey, y: secretKey }, // Simplified - in production use proper curve multiplication
       };
       const randomness = randomField();
       const depositAmount = BigInt(Math.floor(parseFloat(amount) * Number(LAMPORTS_PER_SOL)));
 
-      // Calculate commitment
+      // Calculate cryptographic values
       const waCommitment = calculateWaCommitment(identity.publicKey);
       const commitment = calculateCommitment(identity.publicKey, depositAmount, randomness);
       const index = merkleTree.insert(commitment);
       const root = merkleTree.getRoot();
-
-      setCurrentIdentity(identity);
-      setCurrentRandomness(randomness);
-      setCurrentCommitment(commitment);
-      setCurrentIndex(index);
+      const nullifier = calculateNullifier(identity.secretKey, BigInt(index));
+      const siblings = merkleTree.getProof(index);
 
       setTxStatus("Building deposit transaction...");
 
       // Build deposit data
-      const depositData = new Uint8Array(1 + 8 + 32 + 32);
-      depositData[0] = INSTRUCTION.DEPOSIT;
-      depositData.set(u64ToLeBytes(depositAmount), 1);
-      depositData.set(fieldToBytes(commitment), 1 + 8);
-      depositData.set(fieldToBytes(root), 1 + 8 + 32);
+      const depositDataBytes = new Uint8Array(1 + 8 + 32 + 32);
+      depositDataBytes[0] = INSTRUCTION.DEPOSIT;
+      depositDataBytes.set(u64ToLeBytes(depositAmount), 1);
+      depositDataBytes.set(fieldToBytes(commitment), 1 + 8);
+      depositDataBytes.set(fieldToBytes(root), 1 + 8 + 32);
 
       const instruction = {
         programAddress: SHIELDED_POOL_PROGRAM_ID,
@@ -129,25 +163,43 @@ export function ShieldedPoolCard() {
           { address: vaultAddress, role: 1 },
           { address: SYSTEM_PROGRAM_ADDRESS, role: 0 },
         ],
-        data: depositData,
+        data: depositDataBytes,
       };
 
       setTxStatus("Awaiting signature...");
 
       const signature = await send({ instructions: [instruction] });
 
+      // Store deposit data for CLI proof generation
+      const recipientField = recipientFieldFromPubkey(walletAddress);
+      const newDepositData: DepositData = {
+        root: fieldToHex(root),
+        nullifier: fieldToHex(nullifier),
+        recipient: recipientField,
+        amount: depositAmount,
+        waCommitment: fieldToHex(waCommitment),
+        secretKey: fieldToHex(identity.secretKey),
+        ownerX: fieldToHex(identity.publicKey.x),
+        ownerY: fieldToHex(identity.publicKey.y),
+        randomness: fieldToHex(randomness),
+        index,
+        siblings: siblings.map(fieldToHex),
+      };
+      setDepositData(newDepositData);
+      setShowCliInstructions(true);
+
       // Add to audit log
       const logEntry: AuditLogEntry = {
         name: `Deposit #${auditLog.length + 1}`,
         amount: depositAmount,
         waCommitment: fieldToHex(waCommitment).slice(0, 22) + "...",
-        nullifier: "Pending withdrawal",
+        nullifier: fieldToHex(nullifier).slice(0, 22) + "...",
         recipient: walletAddress,
         txSignature: signature?.slice(0, 20) + "...",
       };
       setAuditLog((prev) => [...prev, logEntry]);
 
-      setTxStatus(`Deposited! TX: ${signature?.slice(0, 20)}...`);
+      setTxStatus(`Deposited! TX: ${signature?.slice(0, 20)}... - See CLI instructions below`);
       setAmount("");
     } catch (err) {
       console.error("Deposit failed:", err);
@@ -156,13 +208,89 @@ export function ShieldedPoolCard() {
   }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree, auditLog.length]);
 
   const handleWithdraw = useCallback(async () => {
-    if (!walletAddress || !currentIdentity || currentIndex === null) {
-      setTxStatus("No active deposit to withdraw. Please deposit first.");
+    if (!walletAddress || !vaultAddress || !stateAddress || !proofHex || !witnessHex || !recipientAddress) {
+      setTxStatus("Please fill in all withdraw fields (proof, witness, recipient)");
       return;
     }
 
-    setTxStatus("ZK Proof generation requires backend API (not implemented in frontend demo)");
-  }, [walletAddress, currentIdentity, currentIndex]);
+    try {
+      setTxStatus("Parsing proof data...");
+
+      // Convert hex to bytes
+      const proofBytes = hexToBytes(proofHex);
+      const witnessBytes = hexToBytes(witnessHex);
+
+      // Extract nullifier from witness (12 byte header + first 32 bytes after header is root, next 32 is nullifier)
+      const WITNESS_HEADER_LEN = 12;
+      const nullifierBytes = witnessBytes.slice(WITNESS_HEADER_LEN + 32, WITNESS_HEADER_LEN + 64);
+
+      // Derive nullifier PDA
+      const [nullifierPda] = await getProgramDerivedAddress({
+        programAddress: SHIELDED_POOL_PROGRAM_ID,
+        seeds: [new TextEncoder().encode("nullifier"), nullifierBytes],
+      });
+
+      setTxStatus("Building withdraw transaction...");
+
+      // Build withdraw instruction data: [WITHDRAW, proof, witness]
+      const data = new Uint8Array(1 + proofBytes.length + witnessBytes.length);
+      data[0] = INSTRUCTION.WITHDRAW;
+      data.set(proofBytes, 1);
+      data.set(witnessBytes, 1 + proofBytes.length);
+
+      const withdrawIx = {
+        programAddress: SHIELDED_POOL_PROGRAM_ID,
+        accounts: [
+          { address: walletAddress, role: 3 },  // fee payer
+          { address: recipientAddress as Address, role: 1 },  // recipient
+          { address: vaultAddress, role: 1 },  // vault
+          { address: stateAddress, role: 1 },  // state
+          { address: nullifierPda, role: 1 },  // nullifier
+          { address: ZK_VERIFIER_PROGRAM_ID, role: 0 },  // verifier
+          { address: SYSTEM_PROGRAM_ADDRESS, role: 0 },  // system
+        ],
+        data,
+      };
+
+      setTxStatus("Awaiting signature... (ZK proof verification on-chain)");
+
+      const signature = await send({ 
+        instructions: [withdrawIx],
+      });
+
+      setTxStatus(`Withdraw successful! TX: ${signature?.slice(0, 20)}...`);
+      setProofHex("");
+      setWitnessHex("");
+      setDepositData(null);
+      setShowCliInstructions(false);
+    } catch (err) {
+      console.error("Withdraw failed:", err);
+      setTxStatus(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  }, [walletAddress, vaultAddress, stateAddress, proofHex, witnessHex, recipientAddress, send]);
+
+  // Generate Prover.toml content
+  const generateProverToml = useCallback(() => {
+    if (!depositData) return "";
+    
+    let toml = `# Prover.toml - Copy this to noir_circuit/Prover.toml\n`;
+    toml += `root = "${depositData.root}"\n`;
+    toml += `nullifier = "${depositData.nullifier}"\n`;
+    toml += `recipient = "${depositData.recipient}"\n`;
+    toml += `amount = ${depositData.amount}\n`;
+    toml += `wa_commitment = "${depositData.waCommitment}"\n`;
+    toml += `secret_key = "${depositData.secretKey}"\n`;
+    toml += `owner_x = "${depositData.ownerX}"\n`;
+    toml += `owner_y = "${depositData.ownerY}"\n`;
+    toml += `randomness = "${depositData.randomness}"\n`;
+    toml += `index = ${depositData.index}\n`;
+    toml += `siblings = [\n`;
+    for (const sib of depositData.siblings) {
+      toml += `  "${sib}",\n`;
+    }
+    toml += `]\n`;
+    return toml;
+  }, [depositData]);
 
   if (status !== "connected") {
     return (
@@ -210,7 +338,7 @@ export function ShieldedPoolCard() {
 
       {/* Deposit Form */}
       <div className="space-y-3">
-        <p className="text-sm font-medium">Deposit SOL</p>
+        <p className="text-sm font-medium">Step 1: Deposit SOL</p>
         <div className="flex gap-3">
           <input
             type="number"
@@ -231,18 +359,108 @@ export function ShieldedPoolCard() {
           </button>
         </div>
         <p className="text-xs text-muted">
-          Deposits create a ZK commitment with your BabyJubJub identity.
+          Deposits create a ZK commitment. After deposit, follow CLI instructions to generate proof.
         </p>
       </div>
 
-      {/* Withdraw Button */}
-      <button
-        onClick={handleWithdraw}
-        disabled={isSending || !currentIdentity}
-        className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {isSending ? "Processing..." : "Withdraw (Requires Backend API)"}
-      </button>
+      {/* CLI Instructions (shown after deposit) */}
+      {showCliInstructions && depositData && (
+        <div className="space-y-3 rounded-xl border border-border-low bg-cream/20 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">Step 2: Generate ZK Proof (CLI)</p>
+            <button
+              onClick={() => setShowCliInstructions(false)}
+              className="text-xs text-muted hover:text-foreground"
+            >
+              Hide
+            </button>
+          </div>
+          
+          <div className="space-y-2">
+            <p className="text-xs text-muted">1. Copy Prover.toml content:</p>
+            <div className="relative">
+              <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono max-h-48">
+                {generateProverToml()}
+              </pre>
+              <button
+                onClick={() => navigator.clipboard.writeText(generateProverToml())}
+                className="absolute right-2 top-2 rounded bg-cream px-2 py-1 text-xs font-medium hover:bg-cream/70"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs text-muted">2. Run commands in terminal:</p>
+            <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono">
+{`cd noir_circuit
+nargo execute
+sunspot prove target/shielded_pool_verifier.json \\
+  target/shielded_pool_verifier.gz \\
+  target/shielded_pool_verifier.ccs \\
+  target/shielded_pool_verifier.pk`}
+            </pre>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs text-muted">3. Convert proof files to hex (run from project root):</p>
+            <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono">
+{`cd client
+npx tsx generate-proof-hex.ts`}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Withdraw Form */}
+      <div className="space-y-3 border-t border-border-low pt-4">
+        <p className="text-sm font-medium">Step 3: Withdraw with ZK Proof</p>
+        
+        <div className="space-y-2">
+          <label className="text-xs text-muted">Proof (hex):</label>
+          <textarea
+            placeholder="0x... (paste proof hex from CLI)"
+            value={proofHex}
+            onChange={(e) => setProofHex(e.target.value)}
+            disabled={isSending}
+            rows={2}
+            className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs text-muted">Public Witness (hex):</label>
+          <textarea
+            placeholder="0x... (paste witness hex from CLI)"
+            value={witnessHex}
+            onChange={(e) => setWitnessHex(e.target.value)}
+            disabled={isSending}
+            rows={2}
+            className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs text-muted">Recipient Address:</label>
+          <input
+            type="text"
+            placeholder="Solana address"
+            value={recipientAddress}
+            onChange={(e) => setRecipientAddress(e.target.value)}
+            disabled={isSending}
+            className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </div>
+
+        <button
+          onClick={handleWithdraw}
+          disabled={isSending || !proofHex || !witnessHex || !recipientAddress}
+          className="w-full rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {isSending ? "Verifying & Withdrawing..." : "Submit Withdraw"}
+        </button>
+      </div>
 
       {/* Status */}
       {txStatus && (
