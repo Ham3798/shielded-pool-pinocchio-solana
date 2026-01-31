@@ -96,7 +96,9 @@ export function isRootValid(
 ): RootValidationResult {
   // Check if it matches current root
   if (bytesEqual(state.currentRoot, root)) {
-    return { isValid: true, index: state.rootsIndex, isCurrent: true };
+    // rootsIndex points to the next position to write, so current root is at (rootsIndex - 1)
+    const currentIndex = (state.rootsIndex - 1 + ROOTS_COUNT) % ROOTS_COUNT;
+    return { isValid: true, index: currentIndex, isCurrent: true };
   }
 
   // Check in ring buffer

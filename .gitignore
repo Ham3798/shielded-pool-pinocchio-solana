@@ -19,6 +19,14 @@ keypair/
 **/dist/
 **/build/
 
+# Exception: include noir_circuit proving artifacts (setup-free proof generation)
+!noir_circuit/target/
+noir_circuit/target/*
+!noir_circuit/target/shielded_pool_verifier.ccs
+!noir_circuit/target/shielded_pool_verifier.pk
+!noir_circuit/target/shielded_pool_verifier.vk
+!noir_circuit/target/shielded_pool_verifier.json
+
 # Node
 node_modules/
 **/node_modules/
@@ -33,9 +41,6 @@ pnpm-debug.log*
 Prover.toml
 *.proof
 *.pw
-*.vk
-*.pk
-*.ccs
 *.gz
 
 # Editor
