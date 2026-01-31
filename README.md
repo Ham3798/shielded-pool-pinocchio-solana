@@ -75,7 +75,7 @@ Shielded Pool
 ## Prerequisites
 
 - [Nargo](https://noir-lang.org/docs/getting_started/noir_installation) `1.0.0-beta.13`
-- [Sunspot](https://github.com/reilabs/sunspot) (Go 1.24+)
+- [Sunspot](https://github.com/reilabs/sunspot) `5fd6223` (Go 1.24+, compatible with Noir 1.0.0-beta.13)
 - [Solana CLI](https://solana.com/docs/intro/installation)
 - Node.js 18+
 
@@ -83,9 +83,10 @@ Shielded Pool
 # Noir
 noirup -v 1.0.0-beta.13
 
-# Sunspot
+# Sunspot (must use commit 5fd6223 for Noir 1.0.0-beta.13 compatibility)
 git clone https://github.com/reilabs/sunspot.git ~/sunspot
-cd ~/sunspot/go && git checkout 5fd6223 && go build -o sunspot .
+cd ~/sunspot && git checkout 5fd6223
+cd go && go build -o sunspot .
 export PATH="$HOME/sunspot/go:$PATH"
 export GNARK_VERIFIER_BIN="$HOME/sunspot/gnark-solana/crates/verifier-bin"
 ```

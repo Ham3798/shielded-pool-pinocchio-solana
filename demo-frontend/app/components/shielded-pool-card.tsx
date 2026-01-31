@@ -266,6 +266,12 @@ export function ShieldedPoolCard() {
       const leaves = merkleTree.getLeaves().map(fieldToHex);
       await saveMerkleTreeState(leaves, fieldToHex(root));
 
+      // Refresh on-chain state to reflect the new root
+      const newState = await fetchShieldedPoolState(rpcUrl, stateAddress);
+      if (newState) {
+        setOnChainState(newState);
+      }
+
       // Reload deposits
       const updatedDeposits = await getAllDeposits();
       setDeposits(updatedDeposits);
@@ -285,7 +291,7 @@ export function ShieldedPoolCard() {
       console.error("Deposit failed:", err);
       setStatusMessage(createErrorStatus(err));
     }
-  }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree]);
+  }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree, rpcUrl]);
 
   const handleWithdraw = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !stateAddress) {
@@ -398,19 +404,30 @@ export function ShieldedPoolCard() {
 
   // Generate full CLI commands
   const generateCliCommands = useCallback(() => {
-    return `# Step 1: Clone repository (if not already done)
+    return `# Step 1: Install prerequisites (if not already done)
+# Noir
+noirup -v 1.0.0-beta.13
+
+# Sunspot (must use commit 5fd6223 for Noir compatibility)
+git clone https://github.com/reilabs/sunspot.git ~/sunspot
+cd ~/sunspot && git checkout 5fd6223
+cd go && go build -o sunspot .
+export PATH="$HOME/sunspot/go:$PATH"
+
+# Step 2: Clone repository (if not already done)
 git clone https://github.com/Ham3798/shielded-pool-pinocchio-solana.git
 cd shielded-pool-pinocchio-solana
 
-# Step 2: Generate proof
+# Step 3: Generate proof
 cd noir_circuit
+# Copy Prover.toml content from above to noir_circuit/Prover.toml
 nargo execute
 sunspot prove target/shielded_pool_verifier.json \\
   target/shielded_pool_verifier.gz \\
   target/shielded_pool_verifier.ccs \\
   target/shielded_pool_verifier.pk
 
-# Step 3: Convert to hex
+# Step 4: Convert to hex
 cd ../client
 npx tsx generate-proof-hex.ts`;
   }, []);
@@ -648,8 +665,8 @@ npx tsx generate-proof-hex.ts`;
           <div className="rounded-lg bg-cream/50 p-3 text-xs text-muted space-y-1">
             <p className="font-medium text-foreground">Requirements:</p>
             <ul className="list-disc list-inside space-y-0.5">
-              <li>Noir (nargo) - ZK circuit compiler</li>
-              <li>Sunspot - Solana proof generator</li>
+              <li>Noir (nargo) v1.0.0-beta.13 - ZK circuit compiler</li>
+              <li>Sunspot commit 5fd6223 - Solana proof generator (Go 1.24+)</li>
               <li>Node.js 18+ - For hex conversion script</li>
             </ul>
           </div>
