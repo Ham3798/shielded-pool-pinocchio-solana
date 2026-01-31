@@ -63,7 +63,7 @@ noirup -v 1.0.0-beta.13
 
 # Sunspot
 git clone https://github.com/reilabs/sunspot.git ~/sunspot
-cd ~/sunspot/go && go build -o sunspot .
+cd ~/sunspot/go && git checkout 5fd6223 && go build -o sunspot .
 export PATH="$HOME/sunspot/go:$PATH"
 export GNARK_VERIFIER_BIN="$HOME/sunspot/gnark-solana/crates/verifier-bin"
 ```
