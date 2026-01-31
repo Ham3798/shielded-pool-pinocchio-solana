@@ -266,6 +266,12 @@ export function ShieldedPoolCard() {
       const leaves = merkleTree.getLeaves().map(fieldToHex);
       await saveMerkleTreeState(leaves, fieldToHex(root));
 
+      // Refresh on-chain state to reflect the new root
+      const newState = await fetchShieldedPoolState(rpcUrl, stateAddress);
+      if (newState) {
+        setOnChainState(newState);
+      }
+
       // Reload deposits
       const updatedDeposits = await getAllDeposits();
       setDeposits(updatedDeposits);
@@ -285,7 +291,7 @@ export function ShieldedPoolCard() {
       console.error("Deposit failed:", err);
       setStatusMessage(createErrorStatus(err));
     }
-  }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree]);
+  }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree, rpcUrl]);
 
   const handleWithdraw = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !stateAddress) {
