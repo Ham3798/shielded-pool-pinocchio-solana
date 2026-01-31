@@ -1,4 +1,6 @@
 import { buildPoseidon, type Poseidon } from "circomlibjs";
+import { Field } from "@noble/curves/abstract/modular.js";
+import { weierstrass } from "@noble/curves/abstract/weierstrass.js";
 
 let poseidonInstance: Poseidon | null = null;
 
@@ -13,6 +15,10 @@ function getPoseidon(): Poseidon {
     throw new Error("Poseidon not initialized. Call initPoseidon() first.");
   }
   return poseidonInstance;
+}
+
+export function isPoseidonReady(): boolean {
+  return poseidonInstance !== null;
 }
 
 export const TREE_DEPTH = 16;
@@ -35,7 +41,49 @@ export function poseidonHash4(
 }
 
 // ============================================
-// BabyJubJub Identity (simplified for frontend)
+// BabyJubJub Curve (BN254's embedded curve)
+// ============================================
+
+// BabyJubJub curve parameters
+// p (base field) = BN254's scalar field order
+// n (scalar field) = BN254's base field order
+const BABYJUBJUB_P = BigInt(
+  "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+);
+const BABYJUBJUB_N = BigInt(
+  "21888242871839275222246405745257275088696311157297823662689037894645226208583"
+);
+
+// Create the field
+const BabyJubJubFp = Field(BABYJUBJUB_P);
+
+// b = -17 mod p
+const BABYJUBJUB_B = BabyJubJubFp.neg(17n);
+
+// Generator point coordinates
+const BABYJUBJUB_GX = 1n;
+const BABYJUBJUB_GY = BigInt(
+  "17631683881184975370165255887551781615748388533673675138860"
+);
+
+// Define BabyJubJub curve using noble-curves
+const BabyJubJubCurve = weierstrass(
+  {
+    p: BABYJUBJUB_P,
+    n: BABYJUBJUB_N,
+    h: 1n,
+    a: 0n,
+    b: BABYJUBJUB_B,
+    Gx: BABYJUBJUB_GX,
+    Gy: BABYJUBJUB_GY,
+  },
+  {
+    Fp: BabyJubJubFp,
+  }
+);
+
+// ============================================
+// BabyJubJub Identity Functions
 // ============================================
 
 export interface IdentityKeypair {
@@ -73,6 +121,28 @@ export function randomField(): bigint {
     result = (result << 8n) | BigInt(array[i]);
   }
   return result;
+}
+
+/**
+ * Generate a new identity keypair using BabyJubJub curve
+ * secretKey is a random scalar, publicKey = secretKey * G
+ * Note: secretKey must be <= 128 bits for Noir's EmbeddedCurveScalar compatibility
+ */
+export function generateIdentityKeypair(secretKey: bigint): IdentityKeypair {
+  // Ensure secretKey is in valid range and fits in 128 bits
+  // This is required because Noir's EmbeddedCurveScalar uses lo/hi 128-bit limbs
+  const sk = secretKey % (MAX_128_BIT + 1n);
+
+  // Compute public key: secretKey * G (using BASE which is the generator)
+  const pk = BabyJubJubCurve.BASE.multiply(sk);
+
+  return {
+    secretKey: sk,
+    publicKey: {
+      x: pk.x,
+      y: pk.y,
+    },
+  };
 }
 
 /**
@@ -126,8 +196,10 @@ export class ShieldedPoolMerkleTree {
     return this.defaultHashes;
   }
 
-  constructor() {
-    // Lazy initialization - defaultHashes computed on first use
+  constructor(existingLeaves?: bigint[]) {
+    if (existingLeaves) {
+      this.leaves = [...existingLeaves];
+    }
   }
 
   insert(commitment: bigint): number {
@@ -179,6 +251,10 @@ export class ShieldedPoolMerkleTree {
   getLeafCount(): number {
     return this.leaves.length;
   }
+
+  getLeaves(): bigint[] {
+    return [...this.leaves];
+  }
 }
 
 // ============================================
@@ -187,6 +263,11 @@ export class ShieldedPoolMerkleTree {
 
 export function fieldToHex(f: bigint): string {
   return "0x" + f.toString(16).padStart(64, "0");
+}
+
+export function hexToField(hex: string): bigint {
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
+  return BigInt("0x" + cleanHex);
 }
 
 export function fieldToBytes(f: bigint): Uint8Array {

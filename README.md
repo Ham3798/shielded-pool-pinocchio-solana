@@ -1,11 +1,58 @@
-# Shielded Pool (Noir + Pinocchio) on Solana
+# Shielded Pool
 
-Private SOL transfers using a Noir circuit for proof generation and a Pinocchio-based on-chain program for deposit/withdraw logic. Proofs are verified on-chain via a Sunspot Groth16 verifier program.
+**One-line description**
+Privacy-preserving SOL transfers on Solana using Noir ZK proofs with BabyJubJub auditable identity.
 
-## Architecture Overview
+**GitHub**
+https://github.com/Ham3798/shielded-pool-pinocchio-solana
+
+**Presentation video**
+
+
+**Live demo**
+
+
+**Track**
+
+
+**Sponsor bounties**
+
+
+## Technical Detail
+
+Shielded Pool is a ZK-based privacy pool for Solana that enables anonymous SOL transfers while maintaining auditability.
+
+**Stack:**
+- **Noir**: ZK circuit for proving valid withdrawals without revealing deposit details. The circuit verifies Merkle tree membership, nullifier uniqueness, and BabyJubJub identity ownership.
+- **Sunspot**: Compiles Noir proofs to Solana-compatible Groth16 format for on-chain verification.
+- **Pinocchio**: Lightweight Solana program framework for the pool and verifier contracts.
+- **BabyJubJub**: Embedded curve on BN254 for auditable identity (wa_commitment), enabling future 2-of-3 threshold audit capability.
+- **Poseidon Hash**: ZK-friendly hash for commitments, nullifiers, and Merkle tree construction.
+
+**Commitment scheme:**
+```
+(owner_x, owner_y) = secret_key * G          // BabyJubJub
+wa_commitment = Poseidon(owner_x, owner_y)   // Auditable identity
+commitment = Poseidon(owner_x, owner_y, amount, randomness)
+nullifier = Poseidon(secret_key, leaf_index)
+```
+
+## Roadmap
+
+- Browser-based proof generation (WASM)
+- 2-of-3 RLWE threshold audit module using wa_commitment
+- Multi-asset support (SPL tokens)
+- Relayer network for gas abstraction
+
+**Telegram**
+
+
+---
+
+## Architecture
 
 ```
-Shielded Pool (repo)
+Shielded Pool
 ├─ noir_circuit/
 │  ├─ nargo execute -> witness (.gz)
 │  └─ sunspot prove -> proof (.proof) + public witness (.pw)
@@ -19,43 +66,18 @@ Shielded Pool (repo)
 
 ***DISCLAIMER: This repository has not been audited. Use at your own risk.***
 
-### Flow Summary
+### Flow
 
-1) **Initialize**: relayer creates state + vault PDAs (fee payer = relayer).  
-2) **Deposit**: sender transfers SOL into the vault and updates the Merkle root.  
-3) **Withdraw**: relayer submits proof, program verifies the proof, consumes the nullifier, and releases SOL to the recipient.
-
-Privacy comes from the ZK proof: the withdraw does not require the sender to sign, and the nullifier prevents double spend.
-
-### Commitment Scheme (BabyJubJub-based Auditable Identity)
-
-The circuit uses BabyJubJub-style elliptic curve for auditable identity:
-
-- `(owner_x, owner_y) = secret_key * G` - BabyJubJub public key derivation
-- `wa_commitment = Poseidon(owner_x, owner_y)` - Auditable identity for future RLWE audit module
-- `commitment = Poseidon(owner_x, owner_y, amount, randomness)` - Note commitment
-- `nullifier = Poseidon(secret_key, leaf_index)` - Double-spend prevention
-
-The `wa_commitment` is a public input that can be logged on-chain for audit purposes.
-
-#### Privacy Notes
-
-This is **not** a full anonymity system for SOL transfers on its own. Practical privacy depends on:
-
-- Pool size and volume (more deposits/withdrawals = larger anonymity set)
-- Transaction frequency and timing correlation
-- Unique wallet count interacting with the pool
-- Delay between deposit and withdraw
-- Fixed denominations (UI/UX should encourage standardized amounts)
+1. **Initialize**: relayer creates state + vault PDAs
+2. **Deposit**: sender transfers SOL into vault, updates Merkle root
+3. **Withdraw**: relayer submits proof, program verifies, releases SOL to recipient
 
 ## Prerequisites
 
 - [Nargo](https://noir-lang.org/docs/getting_started/noir_installation) `1.0.0-beta.13`
 - [Sunspot](https://github.com/reilabs/sunspot) (Go 1.24+)
 - [Solana CLI](https://solana.com/docs/intro/installation)
-- Node.js 18+ (for the client)
-
-Example setup:
+- Node.js 18+
 
 ```bash
 # Noir
@@ -73,31 +95,15 @@ export GNARK_VERIFIER_BIN="$HOME/sunspot/gnark-solana/crates/verifier-bin"
 ```
 .
 ├── noir_circuit/               # Noir circuit + proving artifacts
-│   ├── src/main.nr
-│   ├── Prover.toml
-│   └── target/                 # .json/.ccs/.pk/.vk/.proof/.pw
-├── shielded_pool_program/      # Pinocchio program (initialize/deposit/withdraw)
-├── client/                     # TS integration test + helper scripts
-└── keypair/                    # Local keypairs (ignored by git)
-```
-
-## Keypairs and Airdrop
-
-Create the sender and relayer keypairs:
-
-```bash
-solana-keygen new --outfile keypair/sender.json --no-bip39-passphrase -s
-solana-keygen new --outfile keypair/relayer.json --no-bip39-passphrase -s
-
-solana airdrop 2 $(solana address -k keypair/sender.json) --url devnet
-solana airdrop 2 $(solana address -k keypair/relayer.json) --url devnet
+├── shielded_pool_program/      # Pinocchio program
+├── client/                     # TS integration test
+├── demo-frontend/              # Next.js demo UI
+└── keypair/                    # Local keypairs (gitignored)
 ```
 
 ## Build and Deploy
 
-### 1) Circuit artifacts (Noir + Sunspot)
-
-If you modify the circuit or clone this repository for the first time, you need to generate the artifacts:
+### 1) Circuit artifacts
 
 ```bash
 cd noir_circuit
@@ -109,27 +115,22 @@ sunspot prove target/shielded_pool_verifier.json target/shielded_pool_verifier.g
 sunspot deploy target/shielded_pool_verifier.vk
 ```
 
-`sunspot deploy` outputs a verifier program `.so` you can deploy to Solana.  
-
-### 2) Deploy the verifier program
+### 2) Deploy verifier program
 
 ```bash
 solana program deploy path/to/verifier.so --url devnet
 ```
 
-### 3) Build & deploy the shielded pool program
+### 3) Deploy shielded pool program
 
-Before building, update the verifier program ID in
-`shielded_pool_program/src/instructions/withdraw.rs` to match the verifier you just deployed.
+Update verifier program ID in `shielded_pool_program/src/instructions/withdraw.rs`, then:
 
 ```bash
 cargo build-sbf --manifest-path shielded_pool_program/Cargo.toml
 solana program deploy shielded_pool_program/target/deploy/shielded_pool_pinocchio.so --url devnet
 ```
 
-## Run the Integration Test
-
-The client requires program IDs via env vars.
+## Run Integration Test
 
 ```bash
 RPC_URL=https://api.devnet.solana.com \
@@ -138,16 +139,8 @@ SHIELDED_POOL_PROGRAM_ID=<shielded_pool_program_id> \
 pnpm --dir client run test-shielded-pool
 ```
 
-## Notes
-
-- **Fee payer**: the relayer pays transaction fees for initialize/withdraw.  
-- **Sender privacy**: the sender signs only the deposit. Withdraw uses proof verification and nullifier checks instead of a sender signature.
-- **Proof size**: current proofs are 388 bytes, plus a 172-byte public witness (5 Field elements + 1 u64).
-- **Secret key constraint**: secret_key must be <= 128 bits for Noir's EmbeddedCurveScalar compatibility.
-
 ## Resources
 
 - [Noir Documentation](https://noir-lang.org/docs/)
 - [Sunspot Repository](https://github.com/reilabs/sunspot)
-- [Solana Noir Examples](https://github.com/solana-foundation/noir-examples)
 - [Pinocchio Library](https://github.com/anza-xyz/pinocchio)
