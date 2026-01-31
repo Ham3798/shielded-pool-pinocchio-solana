@@ -1,4 +1,4 @@
-import { type Address, getAddressEncoder } from "@solana/kit";
+import { type Address, getAddressDecoder, getAddressEncoder } from "@solana/kit";
 
 // Program IDs (from environment or defaults)
 export const SHIELDED_POOL_PROGRAM_ID =
@@ -36,6 +36,48 @@ export function recipientFieldFromPubkey(pubkey: Address): string {
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("")
   );
+}
+
+/** Witness layout: 12-byte header + root(32) + nullifier(32) + recipient(32) + amount(32) + wa_commitment(32) */
+const WITNESS_HEADER_LEN = 12;
+const PUBLIC_INPUT_SIZE = 32;
+const RECIPIENT_OFFSET = WITNESS_HEADER_LEN + PUBLIC_INPUT_SIZE * 2; // after root, nullifier
+
+/**
+ * Derive the Solana recipient address from the 32-byte recipient field in the public witness.
+ * The circuit encodes only the first 30 bytes of the address (in field bytes [2..32]);
+ * we use [0,0] for the last 2 bytes to get a canonical address.
+ */
+export function recipientAddressFromWitnessField(recipientField32: Uint8Array): Address {
+  if (recipientField32.length !== 32) throw new Error("recipient field must be 32 bytes");
+  const addressBytes = new Uint8Array(32);
+  addressBytes.set(recipientField32.subarray(2, 32), 0);
+  addressBytes[30] = 0;
+  addressBytes[31] = 0;
+  const [address] = getAddressDecoder().decode(addressBytes);
+  return address as Address;
+}
+
+/**
+ * Extract the 32-byte recipient field from full witness bytes (after 12-byte header + root + nullifier).
+ */
+export function getRecipientFieldFromWitness(witnessBytes: Uint8Array): Uint8Array {
+  const start = RECIPIENT_OFFSET;
+  const end = start + PUBLIC_INPUT_SIZE;
+  if (witnessBytes.length < end) throw new Error("witness too short");
+  return witnessBytes.slice(start, end);
+}
+
+/**
+ * Return true if the given Solana address matches the recipient encoded in the witness.
+ */
+export function recipientMatchesWitness(address: Address, witnessBytes: Uint8Array): boolean {
+  const recipientField = getRecipientFieldFromWitness(witnessBytes);
+  const addressBytes = getAddressEncoder().encode(address);
+  const expectedFirst30 = recipientField.subarray(2, 32);
+  const actualFirst30 = addressBytes.subarray(0, 30);
+  if (expectedFirst30.length !== 30 || actualFirst30.length !== 30) return false;
+  return expectedFirst30.every((b, i) => b === actualFirst30[i]);
 }
 
 /**

@@ -28,6 +28,9 @@ import {
   INSTRUCTION,
   LAMPORTS_PER_SOL,
   recipientFieldFromPubkey,
+  recipientAddressFromWitnessField,
+  getRecipientFieldFromWitness,
+  recipientMatchesWitness,
 } from "../lib/shielded-pool";
 import {
   saveDeposit,
@@ -55,6 +58,27 @@ import {
   type StatusMessage,
 } from "../lib/errors";
 
+/** Poll RPC until the given root appears in on-chain state (or timeout). Returns latest state. */
+async function fetchStateUntilRoot(
+  rpcUrl: string,
+  stateAddress: Address,
+  rootHex: string,
+  onProgress?: (message: string) => void,
+  maxWaitMs: number = 15000,
+  intervalMs: number = 1500
+): Promise<OnChainState | null> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const state = await fetchShieldedPoolState(rpcUrl, stateAddress);
+    if (state && isRootValidFromHex(state, rootHex).isValid) {
+      return state;
+    }
+    onProgress?.("Confirming on-chain...");
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return await fetchShieldedPoolState(rpcUrl, stateAddress);
+}
+
 // Helper function to convert hex string to Uint8Array
 function hexToBytes(hex: string): Uint8Array {
   const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -79,6 +103,8 @@ export function ShieldedPoolCard() {
   const { send, isSending } = useSendTransaction();
 
   const [amount, setAmount] = useState("");
+  /** Recipient for this deposit (who will receive the withdrawal). Empty = use connected wallet. */
+  const [withdrawToAddress, setWithdrawToAddress] = useState("");
   const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
   const [stateAddress, setStateAddress] = useState<Address | null>(null);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
@@ -131,12 +157,28 @@ export function ShieldedPoolCard() {
     }
   }, [isPoseidonReady]);
 
-  // Auto-fill recipient address
+  // Auto-fill recipient: from wallet when empty, or from witness when user pastes proof/witness
   useEffect(() => {
     if (walletAddress && !recipientAddress) {
       setRecipientAddress(walletAddress);
     }
   }, [walletAddress, recipientAddress]);
+
+  // When user pastes witness, derive and pre-fill recipient so it matches the proof
+  useEffect(() => {
+    if (!witnessHex || !witnessHex.startsWith("0x") || witnessHex.length < 20) return;
+    try {
+      const witnessBytes = hexToBytes(witnessHex);
+      const minWitnessLen = 12 + 5 * 32; // header + 5 public inputs
+      if (witnessBytes.length < minWitnessLen) return;
+      const expectedRecipient = recipientAddressFromWitnessField(
+        getRecipientFieldFromWitness(witnessBytes)
+      );
+      setRecipientAddress(expectedRecipient);
+    } catch {
+      // ignore invalid witness
+    }
+  }, [witnessHex]);
 
   // Derive PDAs when wallet connects
   useEffect(() => {
@@ -243,8 +285,9 @@ export function ShieldedPoolCard() {
 
       const signature = await send({ instructions: [instruction] });
 
-      // Create and save deposit record
-      const recipientField = recipientFieldFromPubkey(walletAddress);
+      // Create and save deposit record (recipient = who will receive the withdrawal; default = connected wallet)
+      const recipientForDeposit = (withdrawToAddress?.trim() || walletAddress) as Address;
+      const recipientField = recipientFieldFromPubkey(recipientForDeposit);
       const depositRecord = createDepositRecord({
         secretKey: identity.secretKey,
         publicKey: identity.publicKey,
@@ -266,8 +309,14 @@ export function ShieldedPoolCard() {
       const leaves = merkleTree.getLeaves().map(fieldToHex);
       await saveMerkleTreeState(leaves, fieldToHex(root));
 
-      // Refresh on-chain state to reflect the new root
-      const newState = await fetchShieldedPoolState(rpcUrl, stateAddress);
+      // Wait for on-chain state to include the new root, then refresh (avoids "Root expired" until refresh)
+      setStatusMessage(createStatus("loading", "Confirming on-chain..."));
+      const newState = await fetchStateUntilRoot(
+        rpcUrl,
+        stateAddress,
+        depositRecord.root,
+        (msg) => setStatusMessage(createStatus("loading", msg))
+      );
       if (newState) {
         setOnChainState(newState);
       }
@@ -291,7 +340,7 @@ export function ShieldedPoolCard() {
       console.error("Deposit failed:", err);
       setStatusMessage(createErrorStatus(err));
     }
-  }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree, rpcUrl]);
+  }, [walletAddress, vaultAddress, stateAddress, amount, withdrawToAddress, isPoseidonReady, send, getMerkleTree, rpcUrl]);
 
   const handleWithdraw = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !stateAddress) {
@@ -320,6 +369,28 @@ export function ShieldedPoolCard() {
       // Convert hex to bytes
       const proofBytes = hexToBytes(proofHex);
       const witnessBytes = hexToBytes(witnessHex);
+
+      // Validate recipient matches the proof (on-chain rejects otherwise with InvalidAccountData)
+      try {
+        if (!recipientMatchesWitness(recipientAddress as Address, witnessBytes)) {
+          const expectedRecipient = recipientAddressFromWitnessField(
+            getRecipientFieldFromWitness(witnessBytes)
+          );
+          setStatusMessage(
+            createStatus(
+              "error",
+              "Recipient address does not match the proof. Use the same address that was used when generating the proof.",
+              `Proof expects: ${expectedRecipient}`
+            )
+          );
+          return;
+        }
+      } catch {
+        setStatusMessage(
+          createStatus("error", "Invalid witness format; cannot read recipient from witness.")
+        );
+        return;
+      }
 
       // Extract nullifier from witness (12 byte header + first 32 bytes after header is root, next 32 is nullifier)
       const WITNESS_HEADER_LEN = 12;
@@ -579,24 +650,48 @@ npx tsx generate-proof-hex.ts`;
       {/* Deposit Form */}
       <div className="space-y-3">
         <p className="text-sm font-medium">Step 1: Deposit SOL</p>
-        <div className="flex gap-3">
-          <input
-            type="number"
-            min="0"
-            step="0.001"
-            placeholder="Amount in SOL (min 0.001)"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            disabled={isSending || !isPoseidonReady}
-            className="flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
-          />
-          <button
-            onClick={handleDeposit}
-            disabled={isSending || !amount || parseFloat(amount) < 0.001 || !isPoseidonReady}
-            className="rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {isSending ? "Confirming..." : "Deposit"}
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-3">
+            <input
+              type="number"
+              min="0"
+              step="0.001"
+              placeholder="Amount in SOL (min 0.001)"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              disabled={isSending || !isPoseidonReady}
+              className="flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <button
+              onClick={handleDeposit}
+              disabled={isSending || !amount || parseFloat(amount) < 0.001 || !isPoseidonReady}
+              className="rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSending ? "Confirming..." : "Deposit"}
+            </button>
+          </div>
+          <div className="rounded-lg border border-border-low bg-cream/10 p-3 space-y-2">
+            <label className="block text-sm font-medium">Withdraw to (Recipient)</label>
+            <p className="text-xs text-muted">
+              Set the <strong>Solana address that will receive SOL</strong> when you withdraw.
+              This address is baked into the ZK proof, so withdrawal can only succeed to this address. It cannot be changed later.
+            </p>
+            <input
+              type="text"
+              placeholder={
+                walletAddress
+                  ? `Leave empty = connected wallet (${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)})`
+                  : "Enter recipient Solana address (e.g. 6qZJwYcyE94AzHVUmTgYuzXPVNf6eqGXVEjpkjxbLdGh)"
+              }
+              value={withdrawToAddress}
+              onChange={(e) => setWithdrawToAddress(e.target.value)}
+              disabled={isSending || !isPoseidonReady}
+              className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <p className="text-xs text-muted">
+              Leave empty to receive to your connected wallet; enter an address only when sending to another (e.g. friend, exchange).
+            </p>
+          </div>
         </div>
         <p className="text-xs text-muted">
           Deposits create a ZK commitment using BabyJubJub curve. After deposit, follow CLI
@@ -702,15 +797,18 @@ npx tsx generate-proof-hex.ts`;
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs text-muted">Recipient Address:</label>
+          <label className="text-xs text-muted">Withdraw to (Recipient)</label>
           <input
             type="text"
-            placeholder="Solana address"
+            placeholder="Auto-filled when you paste Public Witness"
             value={recipientAddress}
             onChange={(e) => setRecipientAddress(e.target.value)}
             disabled={isSending}
             className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
           />
+          <p className="text-xs text-muted">
+            Recipient set at deposit time. Auto-filled when you paste witness; must match the proof to withdraw.
+          </p>
         </div>
 
         <button
