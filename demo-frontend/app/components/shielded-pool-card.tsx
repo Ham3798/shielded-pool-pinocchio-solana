@@ -29,6 +29,7 @@ import {
   LAMPORTS_PER_SOL,
   recipientFieldFromPubkey,
   recipientAddressFromWitnessField,
+  recipientAddressFromFieldHex,
   getRecipientFieldFromWitness,
   recipientMatchesWitness,
 } from "../lib/shielded-pool";
@@ -125,6 +126,9 @@ export function ShieldedPoolCard() {
   const [witnessHex, setWitnessHex] = useState("");
   const [recipientAddress, setRecipientAddress] = useState("");
 
+  /** Step 2: Recipient for Prover.toml (base58). Copy uses this; empty = deposit.recipient. */
+  const [proofRecipientAddress, setProofRecipientAddress] = useState("");
+
   const walletAddress = wallet?.account.address;
   const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com";
 
@@ -179,6 +183,20 @@ export function ShieldedPoolCard() {
       // ignore invalid witness
     }
   }, [witnessHex]);
+
+  // Step 2: when selected deposit changes, init proof recipient from deposit (hex -> base58)
+  useEffect(() => {
+    if (!selectedDeposit) {
+      setProofRecipientAddress("");
+      return;
+    }
+    try {
+      const base58 = recipientAddressFromFieldHex(selectedDeposit.recipient);
+      setProofRecipientAddress(base58);
+    } catch {
+      setProofRecipientAddress(walletAddress ?? "");
+    }
+  }, [selectedDeposit?.id, walletAddress]);
 
   // Derive PDAs when wallet connects
   useEffect(() => {
@@ -452,26 +470,38 @@ export function ShieldedPoolCard() {
     }
   }, [walletAddress, vaultAddress, stateAddress, proofHex, witnessHex, recipientAddress, send, selectedDeposit]);
 
-  // Generate Prover.toml content
-  const generateProverToml = useCallback((deposit: DepositRecord) => {
-    let toml = `# Prover.toml - Copy this to noir_circuit/Prover.toml\n`;
-    toml += `root = "${deposit.root}"\n`;
-    toml += `nullifier = "${deposit.nullifier}"\n`;
-    toml += `recipient = "${deposit.recipient}"\n`;
-    toml += `amount = ${deposit.amount}\n`;
-    toml += `wa_commitment = "${deposit.waCommitment}"\n`;
-    toml += `secret_key = "${deposit.secretKey}"\n`;
-    toml += `owner_x = "${deposit.publicKeyX}"\n`;
-    toml += `owner_y = "${deposit.publicKeyY}"\n`;
-    toml += `randomness = "${deposit.randomness}"\n`;
-    toml += `index = ${deposit.leafIndex}\n`;
-    toml += `siblings = [\n`;
-    for (const sib of deposit.siblings) {
-      toml += `  "${sib}",\n`;
-    }
-    toml += `]\n`;
-    return toml;
-  }, []);
+  // Generate Prover.toml content; recipientForProof = base58 (optional). Copy uses current proofRecipientAddress.
+  const generateProverToml = useCallback(
+    (deposit: DepositRecord, recipientForProof?: string): string => {
+      let recipientHex = deposit.recipient;
+      if (recipientForProof?.trim()) {
+        try {
+          recipientHex = recipientFieldFromPubkey(recipientForProof.trim() as Address);
+        } catch {
+          // keep deposit.recipient if invalid address
+        }
+      }
+      let toml = `# Prover.toml - Copy this to noir_circuit/Prover.toml\n`;
+      toml += `# recipient = 수취인 (복사 시 Step 2 위 입력값 반영)\n`;
+      toml += `root = "${deposit.root}"\n`;
+      toml += `nullifier = "${deposit.nullifier}"\n`;
+      toml += `recipient = "${recipientHex}"\n`;
+      toml += `amount = ${deposit.amount}\n`;
+      toml += `wa_commitment = "${deposit.waCommitment}"\n`;
+      toml += `secret_key = "${deposit.secretKey}"\n`;
+      toml += `owner_x = "${deposit.publicKeyX}"\n`;
+      toml += `owner_y = "${deposit.publicKeyY}"\n`;
+      toml += `randomness = "${deposit.randomness}"\n`;
+      toml += `index = ${deposit.leafIndex}\n`;
+      toml += `siblings = [\n`;
+      for (const sib of deposit.siblings) {
+        toml += `  "${sib}",\n`;
+      }
+      toml += `]\n`;
+      return toml;
+    },
+    []
+  );
 
   // Generate full CLI commands
   const generateCliCommands = useCallback(() => {
@@ -671,10 +701,10 @@ npx tsx generate-proof-hex.ts`;
             </button>
           </div>
           <div className="rounded-lg border border-border-low bg-cream/10 p-3 space-y-2">
-            <label className="block text-sm font-medium">Withdraw to (Recipient)</label>
+            <label className="block text-sm font-medium">Withdraw to (Recipient) — optional here</label>
             <p className="text-xs text-muted">
-              Set the <strong>Solana address that will receive SOL</strong> when you withdraw.
-              This address is baked into the ZK proof, so withdrawal can only succeed to this address. It cannot be changed later.
+              You only need to fix the recipient <strong>when generating the Withdraw proof</strong> (in Prover.toml).
+              If you set it here, it will be pre-filled in the copied Prover.toml; leave empty to use your connected wallet later.
             </p>
             <input
               type="text"
@@ -728,17 +758,34 @@ npx tsx generate-proof-hex.ts`;
           )}
 
           <div className="space-y-2">
+            <label className="block text-sm font-medium">Recipient (수취인) — Prover.toml에 반영</label>
+            <p className="text-xs text-muted">
+              수취인 주소를 입력한 뒤 &quot;Copy Prover.toml&quot;을 누르면 클립보드에 현재 값이 반영됩니다.
+            </p>
+            <input
+              type="text"
+              placeholder={walletAddress ? `연결 지갑: ${walletAddress.slice(0, 8)}...${walletAddress.slice(-4)}` : "Solana 수취인 주소"}
+              value={proofRecipientAddress}
+              onChange={(e) => setProofRecipientAddress(e.target.value)}
+              className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30"
+            />
+          </div>
+
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-muted">1. Copy Prover.toml content:</p>
+              <p className="text-xs text-muted">1. Copy Prover.toml (recipient = 위 입력값 반영):</p>
               <button
-                onClick={() => navigator.clipboard.writeText(generateProverToml(selectedDeposit))}
+                onClick={() => navigator.clipboard.writeText(generateProverToml(selectedDeposit, proofRecipientAddress))}
                 className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
               >
                 Copy Prover.toml
               </button>
             </div>
+            <p className="text-xs text-muted">
+              아래 내용의 <code className="rounded bg-cream/50 px-1">recipient = &quot;&#123;recipient&#125;&quot;</code> 는 위 수취인 입력값이 반영된 hex입니다.
+            </p>
             <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono max-h-48">
-              {generateProverToml(selectedDeposit)}
+              {generateProverToml(selectedDeposit, proofRecipientAddress)}
             </pre>
           </div>
 
@@ -807,7 +854,7 @@ npx tsx generate-proof-hex.ts`;
             className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
           />
           <p className="text-xs text-muted">
-            Recipient set at deposit time. Auto-filled when you paste witness; must match the proof to withdraw.
+            Must match the recipient in the proof (set in Prover.toml when generating the proof). Auto-filled when you paste witness.
           </p>
         </div>
 

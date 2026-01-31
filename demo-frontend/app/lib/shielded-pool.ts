@@ -69,6 +69,17 @@ export function getRecipientFieldFromWitness(witnessBytes: Uint8Array): Uint8Arr
 }
 
 /**
+ * Derive Solana address (base58) from the recipient field hex string (0x + 64 hex) used in Prover.toml.
+ */
+export function recipientAddressFromFieldHex(fieldHex: string): Address {
+  const clean = fieldHex.startsWith("0x") ? fieldHex.slice(2) : fieldHex;
+  if (clean.length !== 64) throw new Error("recipient field must be 32 bytes (64 hex chars)");
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  return recipientAddressFromWitnessField(bytes);
+}
+
+/**
  * Return true if the given Solana address matches the recipient encoded in the witness.
  */
 export function recipientMatchesWitness(address: Address, witnessBytes: Uint8Array): boolean {
