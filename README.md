@@ -105,6 +105,18 @@ export GNARK_VERIFIER_BIN="$HOME/sunspot/gnark-solana/crates/verifier-bin"
 
 ### 1) Circuit artifacts
 
+Pre-compiled artifacts (`.ccs`, `.pk`, `.vk`, `.json`) are included in the repository, so you can skip the compile and setup steps and go directly to proof generation.
+
+**Quick start (using pre-compiled artifacts):**
+```bash
+cd noir_circuit
+# Edit Prover.toml with your inputs
+nargo execute
+sunspot prove target/shielded_pool_verifier.json target/shielded_pool_verifier.gz target/shielded_pool_verifier.ccs target/shielded_pool_verifier.pk
+sunspot deploy target/shielded_pool_verifier.vk
+```
+
+**Full build (if you need to regenerate artifacts):**
 ```bash
 cd noir_circuit
 nargo compile
