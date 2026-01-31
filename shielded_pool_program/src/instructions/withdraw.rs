@@ -11,13 +11,13 @@ use solana_program_log::log;
 use crate::state::ShieldedPoolState;
 
 const PROOF_LEN: usize = 388;
-const PUBLIC_INPUTS: usize = 4;
+const PUBLIC_INPUTS: usize = 5;  // root, nullifier, recipient, amount, wa_commitment
 const WITNESS_HEADER_LEN: usize = 12;
 const WITNESS_LEN: usize = WITNESS_HEADER_LEN + (PUBLIC_INPUTS * 32);
 
 /// ZK Verifier program ID
 pub const ZK_VERIFIER_PROGRAM_ID: Address =
-    Address::from_str_const("92VLc7jbH1DcRH4e7tdh7nSwUbKqFDf5VSPk9EdnBMxC");
+    Address::from_str_const("3qfJCYMTnPwFgSX1T3Ncem6b5DphHtNoMmgyVeb52Yti");
 
 pub fn process_withdraw(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     let [payer, recipient, vault, state_account, nullifier_account, zk_verifier, _system_program] =
