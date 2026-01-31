@@ -7,6 +7,7 @@ import {
   useBalance,
 } from "@solana/react-hooks";
 import { getProgramDerivedAddress, type Address } from "@solana/kit";
+import { getSetComputeUnitLimitInstruction } from "@solana-program/compute-budget";
 import {
   initPoseidon,
   randomField128,
@@ -360,7 +361,12 @@ export function ShieldedPoolCard() {
         createStatus("loading", "Awaiting signature... (ZK proof verification on-chain)")
       );
 
-      const signature = await send({ instructions: [withdrawIx] });
+      const signature = await send({
+        instructions: [
+          getSetComputeUnitLimitInstruction({ units: 600_000 }),
+          withdrawIx,
+        ],
+      });
 
       // Update deposit status if we have a selected deposit
       if (selectedDeposit) {
