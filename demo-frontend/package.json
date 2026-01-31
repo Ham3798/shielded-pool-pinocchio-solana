@@ -1,0 +1,46 @@
+{
+  "name": "shielded-pool-demo",
+  "scripts": {
+    "build": "next build --webpack",
+    "ci": "npm run build && npm run lint && npm run format:check",
+    "dev": "next dev --webpack",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint",
+    "start": "next start"
+  },
+  "description": "Solana Shielded Pool - ZK-proof based privacy pool with BabyJubJub auditable identity",
+  "keywords": [
+    "solana",
+    "zk-proof",
+    "privacy",
+    "babyjubjub",
+    "noir",
+    "nextjs",
+    "react",
+    "tailwind"
+  ],
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@solana/client": "^1.2.0",
+    "@solana/kit": "^5.1.0",
+    "@solana/react-hooks": "^1.1.5",
+    "circomlibjs": "^0.1.7",
+    "next": "16.0.10",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.10",
+    "prettier": "^3.6.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
