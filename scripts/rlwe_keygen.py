@@ -6,9 +6,9 @@ All RLWE operations are mod q, NOT mod BN254.
 Shamir secret sharing is over BN254 for ZK compatibility.
 
 Generates:
-  rlwe_keys/rlwe_pk.json       - public key (a, b polynomials, coefficients in [0, q))
-  rlwe_keys/rlwe_params.json   - parameters
-  rlwe_keys/rlwe_sk_shares/    - Shamir shares of sk (over BN254)
+  demo-frontend/public/rlwe/rlwe_pk.json       - public key (a, b polynomials, coefficients in [0, q))
+  demo-frontend/public/rlwe/rlwe_params.json   - parameters
+  demo-frontend/public/rlwe/rlwe_sk_shares/    - Shamir shares of sk (over BN254)
 """
 import os
 import json
@@ -26,7 +26,7 @@ NUM_SHARES = 3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJ_DIR = os.path.dirname(BASE_DIR)
-KEYS_DIR = os.path.join(PROJ_DIR, "rlwe_keys")
+KEYS_DIR = os.path.join(PROJ_DIR, "demo-frontend", "public", "rlwe")
 
 
 def negacyclic_mul_mod_q(a, b, n, q):
