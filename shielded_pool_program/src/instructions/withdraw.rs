@@ -19,8 +19,18 @@ const WITNESS_LEN: usize = WITNESS_HEADER_LEN + (PUBLIC_INPUTS * 32);
 pub const ZK_VERIFIER_PROGRAM_ID: Address =
     Address::from_str_const("3qfJCYMTnPwFgSX1T3Ncem6b5DphHtNoMmgyVeb52Yti");
 
+/// Audit Verifier program ID (RLWE correctness proof)
+pub const AUDIT_VERIFIER_PROGRAM_ID: Address =
+    Address::from_str_const("2A6wr286RiTEYXVjrqmU87xCNG6nusU5rM8ynSbvfdqb");
+
+// Audit circuit constants
+const AUDIT_PROOF_LEN: usize = 388;
+const AUDIT_PUBLIC_INPUTS: usize = 2; // wa_commitment, ct_commitment
+const AUDIT_WITNESS_HEADER_LEN: usize = 12;
+const AUDIT_WITNESS_LEN: usize = AUDIT_WITNESS_HEADER_LEN + (AUDIT_PUBLIC_INPUTS * 32); // 76 bytes
+
 pub fn process_withdraw(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
-    let [payer, recipient, vault, state_account, nullifier_account, zk_verifier, _system_program] =
+    let [payer, recipient, vault, state_account, nullifier_account, zk_verifier, audit_verifier, _system_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -45,6 +55,12 @@ pub fn process_withdraw(accounts: &[AccountView], data: &[u8]) -> ProgramResult 
         return Err(ProgramError::IncorrectProgramId);
     }
 
+    // Verify Audit verifier program ID.
+    if audit_verifier.address() != &AUDIT_VERIFIER_PROGRAM_ID {
+        log("Invalid audit verifier program ID");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     // Load state and verify the root.
     if !state_account.owned_by(&crate::ID) {
         return Err(ProgramError::InvalidAccountOwner);
@@ -58,10 +74,14 @@ pub fn process_withdraw(accounts: &[AccountView], data: &[u8]) -> ProgramResult 
         return Err(ProgramError::UninitializedAccount);
     }
 
-    // Instruction data layout: [proof][witness].
-    // Witness format: 12-byte header + 4 public inputs (32 bytes each).
-    // Public inputs (order): root, nullifier, recipient, amount.
-    if data.len() != PROOF_LEN + WITNESS_LEN {
+    // Instruction data layout: [withdraw_proof][withdraw_witness][audit_proof][audit_witness].
+    // Withdraw witness format: 12-byte header + 5 public inputs (32 bytes each).
+    // Public inputs (order): root, nullifier, recipient, amount, wa_commitment.
+    // Audit witness format: 12-byte header + 2 public inputs (32 bytes each).
+    // Public inputs (order): wa_commitment, ct_commitment.
+    const TOTAL_DATA_LEN: usize = PROOF_LEN + WITNESS_LEN + AUDIT_PROOF_LEN + AUDIT_WITNESS_LEN;
+    if data.len() != TOTAL_DATA_LEN {
+        log("Invalid instruction data length");
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -80,6 +100,23 @@ pub fn process_withdraw(accounts: &[AccountView], data: &[u8]) -> ProgramResult 
     let submitted_amount: [u8; 32] = data[inputs_start + 96..inputs_start + 128]
         .try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    // Extract wa_commitment from withdraw witness (5th public input)
+    let wa_commitment_withdraw: [u8; 32] = data[inputs_start + 128..inputs_start + 160]
+        .try_into()
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    // Extract wa_commitment from audit witness (1st public input after header)
+    let audit_witness_start = PROOF_LEN + WITNESS_LEN + AUDIT_PROOF_LEN + AUDIT_WITNESS_HEADER_LEN;
+    let wa_commitment_audit: [u8; 32] = data[audit_witness_start..audit_witness_start + 32]
+        .try_into()
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    // Cross-verify wa_commitment between withdraw and audit proofs
+    if wa_commitment_withdraw != wa_commitment_audit {
+        log("wa_commitment mismatch between withdraw and audit proofs");
+        return Err(ProgramError::InvalidAccountData);
+    }
 
     // Verify root against state history.
     if !state.check_root(&submitted_root) {
@@ -127,6 +164,18 @@ pub fn process_withdraw(accounts: &[AccountView], data: &[u8]) -> ProgramResult 
         data: &verifier_data,
     };
     invoke(&verify_ix, &[])?;
+
+    // CPI to Audit verifier (RLWE correctness proof).
+    log("Verifying Audit proof...");
+    let audit_proof_start = PROOF_LEN + WITNESS_LEN;
+    let audit_data = &data[audit_proof_start..audit_proof_start + AUDIT_PROOF_LEN + AUDIT_WITNESS_LEN];
+    let audit_verify_ix = InstructionView {
+        program_id: audit_verifier.address(),
+        accounts: &[],
+        data: audit_data,
+    };
+    invoke(&audit_verify_ix, &[])?;
+    log("Audit proof verified");
 
     // Initialize nullifier account after proof verification.
     let rent = Rent::get()?;

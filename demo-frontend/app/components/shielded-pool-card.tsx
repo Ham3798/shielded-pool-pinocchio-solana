@@ -390,31 +390,37 @@ export function ShieldedPoolCard() {
   }, [walletAddress, vaultAddress, stateAddress, amount, isPoseidonReady, send, getMerkleTree, rpcUrl]);
 
   const handleWithdraw = useCallback(async () => {
-    if (!walletAddress || !vaultAddress || !stateAddress) {
-      setStatusMessage(createStatus("error", "Wallet not connected or missing addresses"));
+    if (!vaultAddress || !stateAddress) {
+      setStatusMessage(createStatus("error", "Missing pool addresses"));
       return;
     }
 
-    if (!proofHex || !witnessHex || !recipientAddress) {
+    if (!proofHex || !witnessHex || !auditProofHex || !auditWitnessHex || !recipientAddress) {
       setStatusMessage(
-        createStatus("error", "Please fill in all withdraw fields (proof, witness, recipient)")
+        createStatus("error", "Please fill in all fields (withdraw proof, witness, audit proof, audit witness, recipient)")
       );
       return;
     }
 
     try {
-      setStatusMessage(createStatus("loading", "Parsing proof data..."));
+      setStatusMessage(createStatus("loading", "Validating proof data..."));
 
-      // Validate hex format
+      // Validate hex format for withdraw proof/witness
       if (!proofHex.startsWith("0x") || proofHex.length < 10) {
         throw new ShieldedPoolError(ErrorCode.PROOF_PARSE_ERROR);
       }
       if (!witnessHex.startsWith("0x") || witnessHex.length < 10) {
         throw new ShieldedPoolError(ErrorCode.WITNESS_PARSE_ERROR);
       }
+      // Validate hex format for audit proof/witness
+      if (!auditProofHex.startsWith("0x") || auditProofHex.length < 10) {
+        throw new ShieldedPoolError(ErrorCode.PROOF_PARSE_ERROR, "Invalid audit proof format");
+      }
+      if (!auditWitnessHex.startsWith("0x") || auditWitnessHex.length < 10) {
+        throw new ShieldedPoolError(ErrorCode.WITNESS_PARSE_ERROR, "Invalid audit witness format");
+      }
 
-      // Convert hex to bytes
-      const proofBytes = hexToBytes(proofHex);
+      // Convert hex to bytes to extract nullifier
       const witnessBytes = hexToBytes(witnessHex);
 
       // Extract nullifier from witness (12 byte header + first 32 bytes after header is root, next 32 is nullifier)
@@ -430,49 +436,42 @@ export function ShieldedPoolCard() {
         seeds: [new TextEncoder().encode("nullifier"), nullifierBytes],
       });
 
-      setStatusMessage(createStatus("loading", "Building withdraw transaction..."));
+      setStatusMessage(createStatus("loading", "Submitting to relayer..."));
 
-      // Build withdraw instruction data: [WITHDRAW, proof, witness]
-      const data = new Uint8Array(1 + proofBytes.length + witnessBytes.length);
-      data[0] = INSTRUCTION.WITHDRAW;
-      data.set(proofBytes, 1);
-      data.set(witnessBytes, 1 + proofBytes.length);
-
-      const withdrawIx = {
-        programAddress: SHIELDED_POOL_PROGRAM_ID,
-        accounts: [
-          { address: walletAddress, role: 3 },
-          { address: recipientAddress as Address, role: 1 },
-          { address: vaultAddress, role: 1 },
-          { address: stateAddress, role: 1 },
-          { address: nullifierPda, role: 1 },
-          { address: ZK_VERIFIER_PROGRAM_ID, role: 0 },
-          { address: SYSTEM_PROGRAM_ADDRESS, role: 0 },
-        ],
-        data,
-      };
-
-      setStatusMessage(
-        createStatus("loading", "Awaiting signature... (ZK proof verification on-chain)")
-      );
-
-      const signature = await send({
-        instructions: [
-          getSetComputeUnitLimitInstruction({ units: 600_000 }),
-          withdrawIx,
-        ],
+      // Call relayer API
+      const response = await fetch("/api/relay/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipientAddress,
+          nullifierPda,
+          withdrawProofHex: proofHex,
+          withdrawWitnessHex: witnessHex,
+          auditProofHex,
+          auditWitnessHex,
+        }),
       });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Relayer request failed");
+      }
 
       // Update deposit status if we have a selected deposit
       if (selectedDeposit) {
-        await updateDepositStatus(selectedDeposit.id, "withdrawn", signature);
+        await updateDepositStatus(selectedDeposit.id, "withdrawn", result.signature);
         const updatedDeposits = await getAllDeposits();
         setDeposits(updatedDeposits);
       }
 
-      setStatusMessage(createStatus("success", `Withdraw successful! TX: ${signature?.slice(0, 20)}...`));
+      setStatusMessage(
+        createStatus("success", `Withdraw via relayer! TX: ${result.signature?.slice(0, 20)}... (Relayer: ${result.relayerAddress?.slice(0, 8)}...)`)
+      );
       setProofHex("");
       setWitnessHex("");
+      setAuditProofHex("");
+      setAuditWitnessHex("");
       setSelectedDeposit(null);
       setShowCliInstructions(false);
     } catch (err) {
@@ -480,7 +479,7 @@ export function ShieldedPoolCard() {
       const error = parseTransactionError(err);
       setStatusMessage(createErrorStatus(error));
     }
-  }, [walletAddress, vaultAddress, stateAddress, proofHex, witnessHex, recipientAddress, send, selectedDeposit]);
+  }, [vaultAddress, stateAddress, proofHex, witnessHex, auditProofHex, auditWitnessHex, recipientAddress, selectedDeposit]);
 
   // Generate Prover.toml content
   // IMPORTANT: recipient in proof must match Recipient Address submitted at withdraw.
@@ -1044,35 +1043,6 @@ npx tsx generate-proof-hex.ts`;
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs text-muted">Recipient Address (must match Step 2):</label>
-          <input
-            type="text"
-            placeholder="Same address used when generating proof"
-            value={recipientAddress}
-            onChange={(e) => setRecipientAddress(e.target.value)}
-            disabled={isSending}
-            className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
-          />
-        </div>
-
-        <button
-          onClick={handleWithdraw}
-          disabled={isSending || !proofHex || !witnessHex || !recipientAddress}
-          className="w-full rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {isSending ? "Verifying & Withdrawing..." : "Submit Withdraw"}
-        </button>
-      </div>
-
-      {/* ## SH START ## */}
-      {/* Audit Proof Submission */}
-      <div className="space-y-3 border-t border-border-low pt-4">
-        <p className="text-sm font-medium">
-          Step 4: Submit Audit Proof (Separate TX)
-          {auditLogs.length > 0 && <span className="ml-2 text-green-600">Verified</span>}
-        </p>
-
-        <div className="space-y-2">
           <label className="text-xs text-muted">Audit Proof (hex):</label>
           <textarea
             placeholder="0x... (paste audit proof hex from CLI)"
@@ -1096,18 +1066,29 @@ npx tsx generate-proof-hex.ts`;
           />
         </div>
 
+        <div className="space-y-2">
+          <label className="text-xs text-muted">Recipient Address (must match Step 2):</label>
+          <input
+            type="text"
+            placeholder="Same address used when generating proof"
+            value={recipientAddress}
+            onChange={(e) => setRecipientAddress(e.target.value)}
+            disabled={isSending}
+            className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </div>
+
         <button
-          onClick={handleAuditProofSubmit}
-          disabled={isSending || !auditProofHex || !auditWitnessHex}
+          onClick={handleWithdraw}
+          disabled={isSending || !proofHex || !witnessHex || !auditProofHex || !auditWitnessHex || !recipientAddress}
           className="w-full rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {isSending ? "Verifying Audit Proof..." : "Submit Audit Proof"}
+          {isSending ? "Verifying & Withdrawing..." : "Submit via Relayer"}
         </button>
         <p className="text-xs text-muted">
-          Audit proof verifies RLWE encryption correctness on-chain via a separate verifier program.
+          Withdrawals are submitted via server relayer for privacy. Both ZK proof and audit proof are verified on-chain.
         </p>
       </div>
-      {/* ## SH END ## */}
 
       {/* Status Message */}
       {statusMessage && (

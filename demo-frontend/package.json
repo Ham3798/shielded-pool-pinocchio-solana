@@ -28,6 +28,7 @@
     "@solana/client": "^1.2.0",
     "@solana/kit": "^5.1.0",
     "@solana/react-hooks": "^1.1.5",
+    "@solana/web3.js": "^1.98.4",
     "circomlibjs": "^0.1.7",
     "idb": "^8.0.0",
     "next": "16.0.10",
