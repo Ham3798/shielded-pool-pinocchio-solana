@@ -45,5 +45,3 @@ https://zk-rlwe-pool-solana.vercel.app/
 ---
 
 *Disclaimer: Not audited. Use at your own risk.*
-
-For build, deploy, and full pipeline: see demo-frontend or run `pnpm --dir client run test-shielded-pool`.
