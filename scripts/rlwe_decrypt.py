@@ -20,7 +20,7 @@ BN254_P = 2188824287183927522224640574525727508854836440041603434369820418657580
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJ_DIR = os.path.dirname(BASE_DIR)
-KEYS_DIR = os.path.join(PROJ_DIR, "rlwe_keys")
+KEYS_DIR = os.path.join(PROJ_DIR, "demo-frontend", "public", "rlwe")
 
 
 def negacyclic_mul_mod_q(a, b, n, q):
