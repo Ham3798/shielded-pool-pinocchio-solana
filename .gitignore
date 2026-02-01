@@ -32,6 +32,10 @@ audit_circuit/target/*
 !audit_circuit/target/audit_circuit.ccs
 !audit_circuit/target/audit_circuit.vk
 !audit_circuit/target/audit_verifier.so
+!audit_circuit/target/rlwe_audit.json
+!audit_circuit/target/rlwe_audit.ccs
+!audit_circuit/target/rlwe_audit.pk
+!audit_circuit/target/rlwe_audit.vk
 
 # Node
 node_modules/
