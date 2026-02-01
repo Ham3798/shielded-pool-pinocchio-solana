@@ -139,7 +139,7 @@ export default function Home() {
           <div className="space-y-1">
             <p className="text-lg font-semibold">Technical Architecture</p>
             <p className="text-sm text-muted">
-              Noir (Aztec) · Sunspot (Reilabs) · Pinocchio · BabyJubJub · Poseidon · 🪿 Honk
+              Noir · Sunspot · RLWE · Next
             </p>
           </div>
 
@@ -171,7 +171,7 @@ nullifier = Poseidon(secret_key, leaf_index)`}
 
           <div className="flex flex-wrap gap-3 text-xs">
             <a
-              href="https://github.com/Ham3798/shielded-pool-pinocchio-solana"
+              href="https://github.com/Ham3798/auditable-dark-pool"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded-md bg-cream px-2 py-1 font-medium transition hover:bg-cream/70"
