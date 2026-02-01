@@ -1,4 +1,4 @@
-# Auditable dark pool
+# Auditable dark pool 
 
 **One-line description**<br>
 Auditable dark pool on Solana: private SOL transfers with 2-of-3 auditable compliance via RLWE threshold decryption.
@@ -10,8 +10,8 @@ Auditable dark pool on Solana: private SOL transfers with 2-of-3 auditable compl
 
 **Sponsor bounties**
 
-## **Demo Page**
-- [Auditable Dark Pool](https://zk-rlwe-pool-solana.vercel.app/)
+## Honk🪿
+https://zk-rlwe-pool-solana.vercel.app/
 
 
 ## Team
