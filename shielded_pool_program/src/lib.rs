@@ -1,5 +1,3 @@
-#![no_std]
-
 use pinocchio::{
     address::declare_id, entrypoint, error::ProgramError, AccountView, Address, ProgramResult,
 };
@@ -35,11 +33,10 @@ fn process_instruction(
             log("Instruction: Withdraw");
             instructions::process_withdraw(accounts, data)
         }
+        instructions::instruction::SUBMIT_AUDIT => {
+            log("Instruction: Submit Audit");
+            instructions::process_submit_audit(accounts, data)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
-}
-
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
 }

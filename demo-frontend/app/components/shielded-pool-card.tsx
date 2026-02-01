@@ -103,6 +103,7 @@ export function ShieldedPoolCard() {
   const [deposits, setDeposits] = useState<DepositRecord[]>([]);
   const [selectedDeposit, setSelectedDeposit] = useState<DepositRecord | null>(null);
   const [showCliInstructions, setShowCliInstructions] = useState(false);
+  const [showBackendSetup, setShowBackendSetup] = useState(false);
 
   // On-chain state
   const [onChainState, setOnChainState] = useState<OnChainState | null>(null);
@@ -132,6 +133,11 @@ export function ShieldedPoolCard() {
     bjjX?: string;
     bjjY?: string;
   }[]>([]);
+  const [relayerStatus, setRelayerStatus] = useState<{
+    relayerAddress: string;
+    balanceSol: number;
+    lowBalance: boolean;
+  } | null>(null);
   // ## SH END ##
 
   const walletAddress = wallet?.account.address;
@@ -213,9 +219,33 @@ export function ShieldedPoolCard() {
     };
 
     fetchState();
-    const interval = setInterval(fetchState, 30000); // Every 30 seconds
+    const interval = setInterval(fetchState, 30000);
     return () => clearInterval(interval);
   }, [stateAddress, rpcUrl]);
+
+  // Fetch relayer status
+  useEffect(() => {
+    const fetchRelayer = async () => {
+      try {
+        const res = await fetch("/api/relay/status");
+        if (res.ok) {
+          const data = await res.json();
+          setRelayerStatus({
+            relayerAddress: data.relayerAddress,
+            balanceSol: data.balanceSol,
+            lowBalance: data.lowBalance,
+          });
+        } else {
+          setRelayerStatus(null);
+        }
+      } catch {
+        setRelayerStatus(null);
+      }
+    };
+    fetchRelayer();
+    const interval = setInterval(fetchRelayer, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Validate selected deposit's root
   useEffect(() => {
@@ -513,32 +543,55 @@ export function ShieldedPoolCard() {
     return toml;
   }, [recipientAddress]);
 
-  // Generate full CLI commands
-  const generateCliCommands = useCallback(() => {
-    return `# Step 1: Install prerequisites (if not already done)
+  // Phase 0: Backend setup (run once per machine)
+  const generateBackendSetupCommands = useCallback(() => {
+    return `# Phase 0: Backend setup (run once)
 # Noir
 noirup -v 1.0.0-beta.13
 
-# Sunspot (must use commit 5fd6223 for Noir compatibility)
+# Sunspot (commit 5fd6223 for Noir compatibility)
 git clone https://github.com/reilabs/sunspot.git ~/sunspot
 cd ~/sunspot && git checkout 5fd6223
 cd go && go build -o sunspot .
 export PATH="$HOME/sunspot/go:$PATH"
 
-# Step 2: Clone repository (if not already done)
+# Repo (if not cloned)
 git clone https://github.com/Ham3798/shielded-pool-pinocchio-solana.git
-cd shielded-pool-pinocchio-solana
+cd shielded-pool-pinocchio-solana`;
+  }, []);
 
-# Step 3: Generate proof
-cd noir_circuit
-# Copy Prover.toml content from above to noir_circuit/Prover.toml
+  // Phase 2–4: Circuit execution + client
+  const generateCliCommands = useCallback(() => {
+    return `# After Phase 0 and Phase 1 (copy 3 Prover.toml files)
+
+# Phase 2-A: Compute ct_commitment (required for audit)
+cd ct_helper
+# Paste Prover.toml, then:
+nargo check
+nargo execute
+# Output 0x... is ct_commitment - replace in audit_circuit/Prover.toml
+
+# Phase 2-B: Withdraw proof
+cd ../noir_circuit
+# Paste Prover.toml, then:
+nargo check
 nargo execute
 sunspot prove target/shielded_pool_verifier.json \\
   target/shielded_pool_verifier.gz \\
   target/shielded_pool_verifier.ccs \\
   target/shielded_pool_verifier.pk
 
-# Step 4: Convert to hex
+# Phase 2-C: Audit proof (replace ct_commitment first)
+cd ../audit_circuit
+# Paste Prover.toml with ct_commitment from Phase 2-A output, then:
+nargo check
+nargo execute
+sunspot prove target/rlwe_audit.json \\
+  target/rlwe_audit.gz \\
+  target/rlwe_audit.ccs \\
+  target/rlwe_audit.pk
+
+# Phase 3: Hex conversion
 cd ../client
 npx tsx generate-proof-hex.ts`;
   }, []);
@@ -550,35 +603,53 @@ npx tsx generate-proof-hex.ts`;
     setTimeout(() => setCopiedKey(null), 2000);
   }, []);
 
+  // Helper to pack values for ct_helper and audit circuits
+  const packCiphertextValues = useCallback((hexArr: string[]): string[] => {
+    const PACK_WIDTH = 7;
+    const PACK_BITS = 32n;
+    const packed: string[] = [];
+    for (let i = 0; i < hexArr.length; i += PACK_WIDTH) {
+      let v = 0n;
+      for (let j = 0; j < PACK_WIDTH && i + j < hexArr.length; j++) {
+        const coeff = BigInt(hexArr[i + j]) % 167772161n;
+        v += coeff << (BigInt(j) * PACK_BITS);
+      }
+      packed.push('"0x' + v.toString(16).padStart(64, "0") + '"');
+    }
+    return packed;
+  }, []);
+
+  const generateCtHelperToml = useCallback(
+    (deposit: DepositRecord) => {
+      if (!deposit.rlweCiphertext) return "# RLWE data not available for this deposit";
+
+      const c0Packed = packCiphertextValues(deposit.rlweCiphertext.c0Sparse);
+      const c1Packed = packCiphertextValues(deposit.rlweCiphertext.c1);
+
+      return `# ct_helper Prover.toml - Run this first to compute ct_commitment
+# Copy to ct_helper/Prover.toml, then run: nargo execute
+c0_packed = [${c0Packed.join(", ")}]
+c1_packed = [${c1Packed.join(", ")}]
+`;
+    },
+    [packCiphertextValues]
+  );
+
   const generateAuditToml = useCallback(
     (deposit: DepositRecord) => {
       if (!deposit.rlweCiphertext || !deposit.rlweNoise || !deposit.rlweQuotients) {
         return "# RLWE data not available for this deposit";
       }
-      // Pack 7 values per Field (32-bit each) to match circuit
-      const PACK_WIDTH = 7;
-      const PACK_BITS = 32n;
-      const packValues = (hexArr: string[]): string[] => {
-        const packed: string[] = [];
-        for (let i = 0; i < hexArr.length; i += PACK_WIDTH) {
-          let v = 0n;
-          for (let j = 0; j < PACK_WIDTH && i + j < hexArr.length; j++) {
-            const coeff = BigInt(hexArr[i + j]) % 167772161n;
-            v += coeff << (BigInt(j) * PACK_BITS);
-          }
-          packed.push("0x" + v.toString(16).padStart(64, "0"));
-        }
-        return packed;
-      };
-      const c0Packed = packValues(deposit.rlweCiphertext.c0Sparse);
-      const c1Packed = packValues(deposit.rlweCiphertext.c1);
+      const c0Packed = packCiphertextValues(deposit.rlweCiphertext.c0Sparse).map(s => s.slice(1, -1)); // Remove outer quotes
+      const c1Packed = packCiphertextValues(deposit.rlweCiphertext.c1).map(s => s.slice(1, -1));
 
       const q = (v: string) => `"${v}"`;
       const arr = (a: string[]) => `[${a.map(q).join(", ")}]`;
       let toml = `# Audit Prover.toml - Copy this to audit_circuit/Prover.toml\n`;
+      toml += `# IMPORTANT: Replace ct_commitment with the value from ct_helper!\n`;
       toml += `secret_key = ${q(deposit.secretKey)}\n`;
       toml += `wa_commitment = ${q(deposit.waCommitment)}\n`;
-      toml += `ct_commitment = ${deposit.ctCommitment ? q(deposit.ctCommitment) : '"0"'}\n`;
+      toml += `ct_commitment = "REPLACE_WITH_CT_HELPER_OUTPUT"\n`;
       toml += `c0_packed = ${arr(c0Packed)}\n`;
       toml += `c1_packed = ${arr(c1Packed)}\n`;
       toml += `r = ${arr(deposit.rlweNoise.r)}\n`;
@@ -588,7 +659,7 @@ npx tsx generate-proof-hex.ts`;
       toml += `k1 = ${arr(deposit.rlweQuotients.k1)}\n`;
       return toml;
     },
-    []
+    [packCiphertextValues]
   );
 
   const handleDecrypt = useCallback(async (deposit: DepositRecord) => {
@@ -756,7 +827,7 @@ npx tsx generate-proof-hex.ts`;
                 } else {
                   const isRecent = Date.now() - deposit.createdAt < 15000;
                   rootStatus = isRecent ? (
-                    <span className="text-xs text-blue-600">동기화 대기중...</span>
+                    <span className="text-xs text-blue-600">Syncing...</span>
                   ) : (
                     <span className="text-xs text-red-600">Root expired</span>
                   );
@@ -868,6 +939,38 @@ npx tsx generate-proof-hex.ts`;
             </button>
           </div>
 
+          {/* Phase 0: Backend Setup (Once) - Collapsible */}
+          <div className="rounded-lg border border-slate-500/40 bg-slate-900/20 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowBackendSetup(!showBackendSetup)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-800/30 transition"
+            >
+              <span className="text-sm font-semibold text-slate-300">
+                Phase 0: Backend setup (once, export included)
+              </span>
+              <span className="text-slate-500">{showBackendSetup ? "v" : ">"}</span>
+            </button>
+            {showBackendSetup && (
+              <div className="border-t border-slate-600/50 p-4 space-y-2">
+                <p className="text-xs text-slate-400">
+                  Noir, Sunspot, PATH export. Run once per machine.
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => copyWithFeedback(generateBackendSetupCommands(), "backend-setup")}
+                    className="rounded bg-slate-600 px-3 py-1 text-xs font-medium text-white hover:bg-slate-500"
+                  >
+                    {copiedKey === "backend-setup" ? "Copied!" : "Copy Backend Commands"}
+                  </button>
+                </div>
+                <pre className="overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs font-mono text-green-400">
+                  {generateBackendSetupCommands()}
+                </pre>
+              </div>
+            )}
+          </div>
+
           {/* Root Status Warning */}
           {!onChainState && (
             <div className="rounded-lg bg-blue-100 border border-blue-200 px-4 py-3 text-sm text-blue-800">
@@ -878,7 +981,7 @@ npx tsx generate-proof-hex.ts`;
           {rootValidation && !rootValidation.isValid && selectedDeposit && (
             Date.now() - selectedDeposit.createdAt < 15000 ? (
               <div className="rounded-lg bg-blue-100 border border-blue-200 px-4 py-3 text-sm text-blue-800">
-                온체인 동기화 대기중... 잠시 후 자동으로 업데이트됩니다.
+                Waiting for on-chain sync... Will update automatically.
               </div>
             ) : (
               <div className="rounded-lg bg-red-100 border border-red-200 px-4 py-3 text-sm text-red-800">
@@ -906,36 +1009,81 @@ npx tsx generate-proof-hex.ts`;
               className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-xs font-mono outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
             />
             <p className="text-xs text-muted">
-              Enter the recipient <strong>before</strong> copying Prover.toml. The proof is bound to this address.
+              Enter recipient before copying Prover.toml. Proof is bound to this address.
             </p>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted">1. Copy Prover.toml content:</p>
-              <button
-                onClick={() => copyWithFeedback(generateProverToml(selectedDeposit), "pool-toml")}
-                className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
-              >
-                {copiedKey === "pool-toml" ? "Copied!" : "Copy Pool Prover.toml"}
-              </button>
+          {/* Phase 1: Prover.toml copy */}
+          <div className="rounded-lg border border-amber-600/30 bg-amber-900/10 p-4 space-y-3">
+            <h4 className="text-sm font-semibold text-amber-400">Phase 1: Copy Prover.toml</h4>
+            <p className="text-xs text-gray-400">
+              Copy each to the corresponding directory.
+            </p>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-amber-300">1-A. noir_circuit/Prover.toml</span>
+                  <button
+                    onClick={() => copyWithFeedback(generateProverToml(selectedDeposit), "pool-toml")}
+                    className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
+                  >
+                    {copiedKey === "pool-toml" ? "Copied!" : "Copy Pool"}
+                  </button>
+                </div>
+                <pre className="overflow-x-auto rounded-lg bg-card p-2 text-xs font-mono max-h-32">
+                  {generateProverToml(selectedDeposit)}
+                </pre>
+              </div>
+              {selectedDeposit.rlweCiphertext && (
+                <>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-amber-300">1-B. ct_helper/Prover.toml</span>
+                      <button
+                        onClick={() => copyWithFeedback(generateCtHelperToml(selectedDeposit), "ct-helper-toml")}
+                        className="rounded bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-500"
+                      >
+                        {copiedKey === "ct-helper-toml" ? "Copied!" : "Copy ct_helper"}
+                      </button>
+                    </div>
+                    <pre className="overflow-x-auto rounded-lg bg-card p-2 text-xs font-mono max-h-20">
+                      {generateCtHelperToml(selectedDeposit)}
+                    </pre>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-amber-300">1-C. audit_circuit/Prover.toml</span>
+                      <button
+                        onClick={() => copyWithFeedback(generateAuditToml(selectedDeposit), "audit-toml")}
+                        className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
+                      >
+                        {copiedKey === "audit-toml" ? "Copied!" : "Copy Audit"}
+                      </button>
+                    </div>
+                    <div className="rounded bg-orange-900/20 border border-orange-600/30 px-2 py-1 text-xs text-orange-300">
+                      Replace ct_commitment after Phase 2-A.
+                    </div>
+                    <pre className="overflow-x-auto rounded-lg bg-card p-2 text-xs font-mono max-h-24">
+                      {generateAuditToml(selectedDeposit).slice(0, 500)}...
+                    </pre>
+                  </div>
+                </>
+              )}
             </div>
-            <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono max-h-48">
-              {generateProverToml(selectedDeposit)}
-            </pre>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted">2. Run commands in terminal:</p>
+          {/* Phase 2–3: Circuit execution + client */}
+          <div className="rounded-lg border border-emerald-600/30 bg-emerald-900/10 p-4 space-y-3">
+            <h4 className="text-sm font-semibold text-emerald-400">Phase 2–3: Circuit execution and client hex</h4>
+            <div className="flex justify-end">
               <button
                 onClick={() => copyWithFeedback(generateCliCommands(), "cli-cmds")}
-                className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
+                className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500"
               >
                 {copiedKey === "cli-cmds" ? "Copied!" : "Copy All Commands"}
               </button>
             </div>
-            <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono">
+            <pre className="overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs font-mono text-green-400 whitespace-pre-wrap">
               {generateCliCommands()}
             </pre>
           </div>
@@ -962,23 +1110,18 @@ npx tsx generate-proof-hex.ts`;
             <p className="text-xs text-muted">nullifier: <span className="font-mono">{selectedDeposit.nullifier.slice(0, 22)}...</span></p>
           </div>
 
-          {/* Audit Prover.toml */}
-          {selectedDeposit.rlweCiphertext && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted">Audit Prover.toml (RLWE encrypted):</p>
-                <button
-                  onClick={() => copyWithFeedback(generateAuditToml(selectedDeposit), "audit-toml")}
-                  className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
-                >
-                  {copiedKey === "audit-toml" ? "Copied!" : "Copy Audit Prover.toml"}
-                </button>
-              </div>
-              <pre className="overflow-x-auto rounded-lg bg-card p-3 text-xs font-mono max-h-32">
-                {generateAuditToml(selectedDeposit).slice(0, 500)}...
-              </pre>
-            </div>
-          )}
+          {/* Proof Generation Workflow Overview */}
+          <div className="rounded-lg border border-blue-600/30 bg-blue-900/10 p-4 space-y-3">
+            <h4 className="text-sm font-semibold text-blue-400">Execution order</h4>
+            <ol className="text-xs text-gray-300 space-y-1 list-decimal list-inside">
+              <li><strong>Phase 0</strong> – Backend setup (export, noirup, sunspot). Once.</li>
+              <li><strong>Phase 1</strong> – Copy 3 Prover.toml (noir_circuit, ct_helper, audit_circuit)</li>
+              <li><strong>Phase 2-A</strong> – ct_helper: nargo check, nargo execute to get ct_commitment</li>
+              <li><strong>Phase 2-B</strong> – noir_circuit: nargo check, nargo execute + sunspot prove</li>
+              <li><strong>Phase 2-C</strong> – audit_circuit: replace ct_commitment, nargo check, nargo execute + sunspot prove</li>
+              <li><strong>Phase 3</strong> – client: npx tsx generate-proof-hex.ts</li>
+            </ol>
+          </div>
 
           {/* Shamir Decrypt */}
           {selectedDeposit.rlweCiphertext && (
@@ -1088,6 +1231,38 @@ npx tsx generate-proof-hex.ts`;
         <p className="text-xs text-muted">
           Withdrawals are submitted via server relayer for privacy. Both ZK proof and audit proof are verified on-chain.
         </p>
+        <p className="text-xs text-muted">
+          <span className="text-red-600 font-medium">*</span> Relayer has no gas? Withdrawals will fail. Fund the address below to keep the service running.
+        </p>
+        {relayerStatus && (
+          <div className={`rounded-xl border p-4 ${relayerStatus.lowBalance ? "border-orange-300 bg-orange-50 dark:bg-orange-950/20" : "border-border-low bg-cream/30"}`}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted">Relayer</p>
+                <p className="mt-1 font-mono text-sm truncate max-w-[240px]" title={relayerStatus.relayerAddress}>
+                  {relayerStatus.relayerAddress}
+                </p>
+                <p className="mt-1 text-lg font-semibold tabular-nums">
+                  {relayerStatus.balanceSol.toFixed(4)}{" "}
+                  <span className="text-sm font-normal text-muted">SOL</span>
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={() => copyWithFeedback(relayerStatus.relayerAddress, "relayer-addr")}
+                  className="rounded bg-foreground px-3 py-1 text-xs font-medium text-background hover:opacity-90"
+                >
+                  {copiedKey === "relayer-addr" ? "Copied" : "Copy address"}
+                </button>
+                {relayerStatus.lowBalance && (
+                  <span className="text-xs font-medium text-orange-700 dark:text-orange-400">
+                    Low balance. Fund to enable withdrawals.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status Message */}

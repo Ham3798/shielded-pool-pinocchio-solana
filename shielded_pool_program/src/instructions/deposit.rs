@@ -23,9 +23,11 @@ pub fn process_deposit(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     if data.len() != 72 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let amount = u64::from_le_bytes(data[0..8].try_into().map_err(|_| {
-        ProgramError::InvalidInstructionData
-    })?);
+    let amount = u64::from_le_bytes(
+        data[0..8]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
     let _commitment: [u8; 32] = data[8..40]
         .try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?;

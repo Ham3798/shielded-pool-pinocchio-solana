@@ -16,13 +16,13 @@ export default function Home() {
             Solana Privacy Pool
           </p>
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            Shielded Pool Demo
+            Verifiable Dark Pool
           </h1>
           <p className="max-w-3xl text-base leading-relaxed text-muted">
-            ZK-proof based privacy pool with{" "}
-            <span className="font-semibold">BabyJubJub auditable identity</span>{" "}
-            on Solana. Deposit SOL privately, generate ZK proofs with Noir circuits,
-            and enable future RLWE-based compliance audits.
+            Privacy-preserving SOL transfers with{" "}
+            <span className="font-semibold">compliance-first design</span>.
+            Anonymous deposits and withdrawals, but identity can be recovered by
+            2-of-3 designated auditors via RLWE threshold decryption.
           </p>
           <ul className="mt-4 space-y-2 text-sm text-foreground">
             <li className="flex gap-2">
@@ -31,8 +31,8 @@ export default function Home() {
                 aria-hidden
               />
               <div>
-                <span className="font-medium">BabyJubJub Identity</span> — Elliptic
-                curve-based identity for auditable privacy.
+                <span className="font-medium">Auditable dark pool</span> — Private
+                transfers with selective disclosure under authorized audit.
               </div>
             </li>
             <li className="flex gap-2">
@@ -41,8 +41,9 @@ export default function Home() {
                 aria-hidden
               />
               <div>
-                <span className="font-medium">Noir ZK Circuits</span> — Groth16
-                proofs compiled via Sunspot for Solana.
+                <span className="font-medium">2-of-3 RLWE decryption</span> —
+                Identity (wa_commitment) encrypted; only 2-of-3 auditors can
+                jointly decrypt for compliance.
               </div>
             </li>
             <li className="flex gap-2">
@@ -51,8 +52,8 @@ export default function Home() {
                 aria-hidden
               />
               <div>
-                <span className="font-medium">Poseidon Hash</span> — ZK-friendly
-                hash for commitments, nullifiers, and Merkle trees.
+                <span className="font-medium">Noir ZK + Sunspot</span> — Withdrawal
+                proofs verified on-chain via Groth16.
               </div>
             </li>
             <li className="flex gap-2">
@@ -61,8 +62,8 @@ export default function Home() {
                 aria-hidden
               />
               <div>
-                <span className="font-medium">wa_commitment</span> — Auditable
-                identity for future 2-of-3 RLWE audit module.
+                <span className="font-medium">Compliance</span> — On-chain audit
+                proof attestation; no single party has full decryption access.
               </div>
             </li>
           </ul>
@@ -138,7 +139,7 @@ export default function Home() {
           <div className="space-y-1">
             <p className="text-lg font-semibold">Technical Architecture</p>
             <p className="text-sm text-muted">
-              How the Shielded Pool works under the hood.
+              Noir (Aztec) · Sunspot (Reilabs) · Pinocchio · BabyJubJub · Poseidon
             </p>
           </div>
 
@@ -197,15 +198,16 @@ nullifier = Poseidon(secret_key, leaf_index)`}
         </section>
 
         {/* Footer */}
-        <footer className="border-t border-border-low pt-6 text-center text-xs text-muted">
+        <footer className="border-t border-border-low pt-6 text-center text-xs text-muted space-y-1">
+          <p>Built for Solana Privacy Hackathon 2026</p>
           <p>
-            Built for Solana Hackathon | Telegram:{" "}
-            <a
-              href="https://t.me/Scarrots"
-              className="font-medium underline underline-offset-2"
-            >
-              @Scarrots
-            </a>
+            <a href="https://x.com/ham379888" target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">@ham379888</a>
+            {" · "}
+            <a href="https://x.com/Scarrots93" target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">@Scarrots93</a>
+            {" · "}
+            <a href="https://t.me/Yunsikkkk" target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">TG @Yunsikkkk</a>
+            {" · "}
+            <a href="https://t.me/Scarrots" target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">TG @Scarrots</a>
           </p>
         </footer>
       </main>

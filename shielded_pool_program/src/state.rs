@@ -45,3 +45,22 @@ impl ShieldedPoolState {
         false
     }
 }
+
+/// Audit record for a specific user identity (wa_commitment)
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct AuditRecord {
+    /// Discriminator to identify account type
+    pub discriminator: [u8; 8],
+    /// The wa_commitment this record verifies
+    pub wa_commitment: [u8; 32],
+}
+
+impl AuditRecord {
+    pub const LEN: usize = core::mem::size_of::<AuditRecord>();
+    pub const DISCRIMINATOR: [u8; 8] = *b"auditrec";
+
+    pub fn is_initialized(&self) -> bool {
+        self.discriminator == Self::DISCRIMINATOR
+    }
+}
