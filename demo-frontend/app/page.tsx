@@ -16,7 +16,7 @@ export default function Home() {
             Solana Privacy Pool
           </p>
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            Verifiable Dark Pool
+            Auditable Dark Pool
           </h1>
           <p className="max-w-3xl text-base leading-relaxed text-muted">
             Privacy-preserving SOL transfers with{" "}
@@ -139,7 +139,7 @@ export default function Home() {
           <div className="space-y-1">
             <p className="text-lg font-semibold">Technical Architecture</p>
             <p className="text-sm text-muted">
-              Noir (Aztec) · Sunspot (Reilabs) · Pinocchio · BabyJubJub · Poseidon
+              Noir (Aztec) · Sunspot (Reilabs) · Pinocchio · BabyJubJub · Poseidon · 🪿 Honk
             </p>
           </div>
 

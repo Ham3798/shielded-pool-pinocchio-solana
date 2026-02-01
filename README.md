@@ -1,7 +1,7 @@
-# Verifiable dark pool
+# Auditable dark pool
 
 **One-line description**
-Verifiable dark pool on Solana: private SOL transfers with 2-of-3 auditable compliance via RLWE threshold decryption.
+Auditable dark pool on Solana: private SOL transfers with 2-of-3 auditable compliance via RLWE threshold decryption.
 
 **GitHub**
 https://github.com/Ham3798/shielded-pool-pinocchio-solana
@@ -10,6 +10,7 @@ https://github.com/Ham3798/shielded-pool-pinocchio-solana
 
 
 **Live demo**
+https://zk-rlwe-pool-solana.vercel.app/
 
 
 **Track**
@@ -32,7 +33,7 @@ https://github.com/Ham3798/shielded-pool-pinocchio-solana
 - Identity encrypted with RLWE; ZK proves encryption correctness on-chain
 - Constant PK optimization: 42x fewer constraints (1.1M → 26K) via negacyclic row hardcoding
 
-**Stack:** Noir · Sunspot · Pinocchio · BabyJubJub · RLWE + Shamir 2-of-3 · Poseidon
+**Stack:** Noir · Sunspot · Pinocchio · BabyJubJub · RLWE + Shamir 2-of-3 · Poseidon · 🪿 Honk
 
 **Flow:** Initialize (relayer) → Deposit (Merkle root update) → Withdraw (ZK + Audit proof verified on-chain)
 

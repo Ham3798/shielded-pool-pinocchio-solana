@@ -1,6 +1,6 @@
 # Demo Frontend
 
-Shielded Pool demo web UI. See [project root README](../README.md) for main documentation.
+Shielded Pool demo web UI for the Auditable Dark Pool (🪿 Honk). See [project root README](../README.md) for main documentation.
 
 ## Run
 
