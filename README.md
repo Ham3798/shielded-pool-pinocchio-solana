@@ -7,7 +7,7 @@ Submission for [Solana Privacy Hack](https://solana.com/privacyhack) (Jan 12 –
 
 ## Project Description
 
-**Solana Auditable Dark Pool** is a compliance-first privacy solution enabling anonymous SOL transfers with an auditable identity for regulators. Unlike Tornado Cash, we implement a **2-of-3 Threshold Decryption** mechanism using RLWE encryption. While users maintain privacy from the public, designated auditors can recover transaction identities **if, and only if**, a threshold of auditors agree.
+**Solana Auditable Dark Pool** is a compliance-first privacy solution enabling anonymous SOL transfers with an auditable identity for regulators. we implement a **2-of-3 Threshold Decryption** mechanism using RLWE encryption. While users maintain privacy from the public, designated auditors can recover transaction identities **if, and only if**, a threshold of auditors agree.
 
 ## Sponsor Technologies Used
 
